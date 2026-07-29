@@ -131,3 +131,29 @@ inline void c2d_zoh_expm(
 {
     expm_pade_vanloan(Ac, Bc, Ts, Ad, Bd);
 }
+
+// // ============================================================
+// //  c2d_zoh_expm  —  ZOH discretisation via Van Loan's method
+// //                   (doi:10.1109/tac.1978.1101743)
+// //
+// //    M = expm([Ac Bc; 0 0] * Ts)
+// //    Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
+// //
+// //  The augmented matrix is 18x18 here. Its bottom NU rows are
+// //  zero, so the exponential has the structure [Ad Bd; 0 I] —
+// //  exploitable, but the general expm keeps this auditable and
+// //  the cost is already modest.
+// // ============================================================
+// inline void c2d_zoh_expm(
+//     const MatNX& Ac, const MatNXNU& Bc, Scalar Ts,
+//     MatNX& Ad, MatNXNU& Bd)
+// {
+//     MatAug M = MatAug::Zero();
+//     M.topLeftCorner<NX, NX>()  = Ac * Ts;
+//     M.topRightCorner<NX, NU>() = Bc * Ts;
+
+//     const MatAug E = expm_pade(M);
+
+//     Ad = E.topLeftCorner<NX, NX>();
+//     Bd = E.topRightCorner<NX, NU>();
+// }

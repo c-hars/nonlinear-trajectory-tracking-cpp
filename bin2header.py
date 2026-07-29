@@ -1,6 +1,8 @@
 import numpy as np
 import sys
 
+N = int(sys.argv[1])
+
 def bin_to_header(bin_path, var_name, n_doubles):
     data = np.fromfile(bin_path, dtype=np.float64)
     assert len(data) == n_doubles, f"{bin_path}: expected {n_doubles}, got {len(data)}"
@@ -12,7 +14,7 @@ def bin_to_header(bin_path, var_name, n_doubles):
     lines.append("};")
     return "\n".join(lines)
 
-NX, NU, NY, N = 12, 6, 6, 451
+NX, NU, NY = 12, 6, 6
 
 header = "#pragma once\n// Auto-generated from MATLAB trajectory export\n\n"
 header += bin_to_header("x_traj.bin", "x_traj_data", N * NX) + "\n\n"

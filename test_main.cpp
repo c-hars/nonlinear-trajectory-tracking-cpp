@@ -33,7 +33,7 @@
   #include <vector>
 #endif
 
-constexpr int N_STEPS = 401;
+constexpr int N_STEPS = 381;
 static Scalar x_traj[N_STEPS * NX];
 static Scalar u_traj[N_STEPS * NU];
 static Scalar r_traj[N_STEPS * NY];
@@ -263,6 +263,8 @@ static void run_timing_test() {
 
     PRINT("\n--- Health ---\n");
     PRINT("  budget @ %.0f Hz : %.0f us\n", 1.0/ctrl.qp.Ts, 1e6*ctrl.qp.Ts);
+    PRINT("  median util     : %.1f %%\n",
+          100.0 * pct(t_tot,50) / (1e6*ctrl.qp.Ts));
     PRINT("  worst-case util : %.1f %%\n",
           100.0 * pct(t_tot,100) / (1e6*ctrl.qp.Ts));
     PRINT("  SDA fallbacks   : %d / %d\n", n_fallback, N_STEPS);
