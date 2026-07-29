@@ -118,21 +118,16 @@ inline MatNXNU get_B_sdc(const VecNU& delta_u, const QuadParams& qp)
 //    M = expm([Ac Bc; 0 0] * Ts)
 //    Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
 //
-//  The augmented matrix is 18x18 here. Its bottom NU rows are
-//  zero, so the exponential has the structure [Ad Bd; 0 I] —
-//  exploitable, but the general expm keeps this auditable and
-//  the cost is already modest.
+//  The augmented matrix would be 18x18 here.  Its bottom NU rows
+//  are zero, so every power keeps the form [P Q; 0 cI] and the
+//  exponential comes out as [Ad Bd; 0 I].  expm_pade_vanloan
+//  carries only the (P,Q,c) triple through the same Pade
+//  builders, so the zero blocks are never multiplied and the
+//  final solve is 12x12 rather than 18x18.  ~2.3x.
 // ============================================================
 inline void c2d_zoh_expm(
     const MatNX& Ac, const MatNXNU& Bc, Scalar Ts,
     MatNX& Ad, MatNXNU& Bd)
 {
-    MatAug M = MatAug::Zero();
-    M.topLeftCorner<NX, NX>()  = Ac * Ts;
-    M.topRightCorner<NX, NU>() = Bc * Ts;
-
-    const MatAug E = expm_pade(M);
-
-    Ad = E.topLeftCorner<NX, NX>();
-    Bd = E.topRightCorner<NX, NU>();
+    expm_pade_vanloan(Ac, Bc, Ts, Ad, Bd);
 }

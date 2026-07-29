@@ -196,3 +196,153 @@ MatT expm_pade(const MatT& Ain)
 
     return X;
 }
+
+#include <algorithm>   // std::max
+
+// ============================================================
+//  Block-structured Van Loan path.
+//
+//  For  F = [A B; 0 0]  every power keeps the shape
+//
+//    Z = [ P    Q  ]     bottom-left structurally zero,
+//        [ 0   c*I ]     bottom-right always a multiple of I
+//
+//  because F^k = [A^k  A^(k-1) B; 0  0] for k >= 1.  That set is
+//  closed under +, -, scalar*, and *, so the Pade builders above
+//  run verbatim on the triple (P,Q,c) and never touch a zero
+//  block.  The coefficient tables are shared, not forked — only
+//  the driver differs (norm, solve, squaring).
+//
+//  Per matrix product:  n^2(n+m) instead of (n+m)^3.
+//  NX=12, NU=6 -> 2592 vs 5832 multiply-adds.
+// ============================================================
+
+namespace expm_detail {
+
+template <typename S_, int N, int M>
+struct BlockUT {
+    using Scalar = S_;
+    static constexpr int RowsAtCompileTime = N + M;   // for expm_pade's assert
+
+    Eigen::Matrix<Scalar, N, N> P;
+    Eigen::Matrix<Scalar, N, M> Q;
+    Scalar                      c;
+
+    static BlockUT Identity() {
+        return { Eigen::Matrix<Scalar, N, N>::Identity(),
+                 Eigen::Matrix<Scalar, N, M>::Zero(),
+                 Scalar(1) };
+    }
+};
+
+// (P1,Q1,c1) * (P2,Q2,c2) = (P1 P2,  P1 Q2 + c2 Q1,  c1 c2)
+template <typename S, int N, int M>
+inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
+                                const BlockUT<S,N,M>& b) {
+    return { a.P * b.P, a.P * b.Q + b.c * a.Q, a.c * b.c };
+}
+
+template <typename S, int N, int M>
+inline BlockUT<S,N,M> operator+(const BlockUT<S,N,M>& a,
+                                const BlockUT<S,N,M>& b) {
+    return { a.P + b.P, a.Q + b.Q, a.c + b.c };
+}
+
+template <typename S, int N, int M>
+inline BlockUT<S,N,M> operator-(const BlockUT<S,N,M>& a,
+                                const BlockUT<S,N,M>& b) {
+    return { a.P - b.P, a.Q - b.Q, a.c - b.c };
+}
+
+template <typename S, int N, int M>
+inline BlockUT<S,N,M> operator*(const S& k, const BlockUT<S,N,M>& a) {
+    return { k * a.P, k * a.Q, k * a.c };
+}
+
+}  // namespace expm_detail
+
+// ------------------------------------------------------------
+//  expm([Ac Bc; 0 0] * Ts) -> (Ad, Bd), without ever forming
+//  the (N+M) x (N+M) matrix.
+//
+//  MUST be a template: the degree ladder names th9/th13, which
+//  do not exist in the float traits.  Only a dependent Th lets
+//  if-constexpr discard that branch un-instantiated.
+// ------------------------------------------------------------
+template <typename S, int N, int M>
+void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
+                       const Eigen::Matrix<S,N,M>& Bc,
+                       const S                     Ts,
+                       Eigen::Matrix<S,N,N>&       Ad,
+                       Eigen::Matrix<S,N,M>&       Bd)
+{
+    using Th  = expm_pade_traits<S>;
+    using Blk = expm_detail::BlockUT<S,N,M>;
+    static_assert(N > 0 && M > 0, "expm_pade_vanloan needs non-empty blocks");
+
+    Blk       F { Ac * Ts, Bc * Ts, S(0) };
+    const Blk I = Blk::Identity();
+
+    // ||F||_1 = max column sum.  Bottom block row is zero, so this
+    // is just the larger of the two blocks' max column sums.
+    const S nA = std::max(F.P.cwiseAbs().colwise().sum().maxCoeff(),
+                          F.Q.cwiseAbs().colwise().sum().maxCoeff());
+
+    Blk U, V;
+    int s = 0;
+
+    auto rescale = [&](S theta) {
+        s = static_cast<int>(std::ceil(std::log2(double(nA / theta))));
+        if (s < 0) s = 0;
+        const S f = std::ldexp(S(1), -s);
+        F.P *= f;
+        F.Q *= f;
+    };
+
+    if (nA <= Th::th3) {
+        expm_detail::pade3(F, I, U, V);
+
+    } else if (nA <= Th::th5) {
+        expm_detail::pade5(F, I, U, V);
+
+    } else if constexpr (Th::max_degree == 7) {
+        // ---- single precision: degree 7 is the top ----
+        if (nA > Th::th_top) rescale(Th::th_top);
+        expm_detail::pade7(F, I, U, V);
+
+    } else {
+        // ---- double precision: 7, 9, then 13 with scaling ----
+        if (nA <= Th::th7) {
+            expm_detail::pade7(F, I, U, V);
+        } else if (nA <= Th::th9) {
+            expm_detail::pade9(F, I, U, V);
+        } else {
+            if (nA > Th::th_top) rescale(Th::th_top);
+            expm_detail::pade13(F, I, U, V);
+        }
+    }
+
+    // r_m(F) = (V - U)^{-1}(V + U).
+    //   U.c == 0 always — every term carries F to an odd power >= 1 —
+    //   so W.c == Y.c == the Pade constant term, which is never zero.
+    //   Solving W X = Y then forces X.c = 1 and leaves
+    //     X.P = W.P^{-1} Y.P
+    //     X.Q = W.P^{-1} (Y.Q - W.Q)
+    //   One N x N factorisation, N + M right-hand sides, instead of
+    //   an (N+M) x (N+M) one.
+    const Blk  W  = V - U;
+    const Blk  Y  = V + U;
+    const auto lu = W.P.partialPivLu();
+
+    Blk X;
+    X.P = lu.solve(Y.P);
+    X.Q = lu.solve(Y.Q - W.Q);
+    X.c = S(1);
+
+    // Undo the scaling.  X^2 = (X.P^2, X.P X.Q + X.Q, 1).
+    // Safe: operator* builds a full temporary before the assignment.
+    for (int i = 0; i < s; ++i) X = X * X;
+
+    Ad = X.P;
+    Bd = X.Q;
+}

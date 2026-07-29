@@ -17,6 +17,8 @@
 // 
 // ============================================================
 
+// g++ -std=c++17 -O2 -D_USE_MATH_DEFINES -I"C:\Users\conor\eigen" test_main.cpp -o test_sddre.exe
+
 
 #include "sddre_controller.h"
 
@@ -31,7 +33,7 @@
   #include <vector>
 #endif
 
-constexpr int N_STEPS = 381;
+constexpr int N_STEPS = 401;
 static Scalar x_traj[N_STEPS * NX];
 static Scalar u_traj[N_STEPS * NU];
 static Scalar r_traj[N_STEPS * NY];
