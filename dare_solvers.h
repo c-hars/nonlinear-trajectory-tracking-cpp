@@ -78,7 +78,7 @@ inline Scalar compute_dare_residual(
 inline MatNX dlyap_fast_c(
     const MatNX& A, const MatNX& Q,
     DlyapInfo& info,
-    Scalar tol = 1e-14,
+    Scalar tol = Tol::dlyap,
     int    max_doublings = 60)
 {
     info = DlyapInfo{};
@@ -119,7 +119,7 @@ inline MatNX dlyap_fast_c(
     symmetrise(X);
 
     info.doublings     = j;
-    info.rel_increment = ninc / std::max(X.norm(), MATLAB_EPS);
+    info.rel_increment = ninc / std::max(X.norm(), SCALAR_EPS);
     return X;
 }
 
@@ -180,7 +180,7 @@ inline MatNX dare_sda(
             // norm(Ak) is the algorithm's native monitor and nearly
             // free. It also catches the case where further doublings
             // cannot progress, which the residual test alone misses.
-            if (Ak.norm() < MATLAB_EPS) break;
+            if (Ak.norm() < SCALAR_EPS) break;
             if (compute_dare_residual(A, B, Q, R, H) < tolerance) break;
         }
     }

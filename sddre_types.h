@@ -17,8 +17,34 @@ constexpr int NU = 6;    // inputs  (== n_rotors)
 constexpr int NY = 6;    // outputs (rows of C)
 
 // ---- Scalar type --------------------------------------------
-using Scalar = double;
-// using Scalar = float;
+#ifndef SDDRE_USE_FLOAT
+  #define SDDRE_USE_FLOAT 0
+#endif
+
+#if SDDRE_USE_FLOAT
+  using Scalar = float;
+#else
+  using Scalar = double;
+#endif
+constexpr Scalar SCALAR_EPS = std::numeric_limits<Scalar>::epsilon();
+// constexpr double MATLAB_EPS = 2.220446049250313e-16; % 2^-52, double precision, SCALAR_EPS supersedes this
+
+// ---- Precision-dependent numerical tolerances ---------------
+//  Kept together deliberately: every constant here is tied to the
+//  unit roundoff of Scalar and is wrong if copied across precisions.
+template <typename S> struct sddre_tol;
+
+template <> struct sddre_tol<double> {
+    static constexpr double dlyap = 1e-14;   // ~45 * eps(double)
+    static constexpr double dare  = 1e-4;
+};
+
+template <> struct sddre_tol<float> {
+    static constexpr float dlyap = 1e-5f;    // ~84 * eps(float)
+    static constexpr float dare  = 1e-4f;
+};
+
+using Tol = sddre_tol<Scalar>;
 
 // ---- Fixed-size Eigen types ---------------------------------
 //  All stack-allocated — no heap in the hot path.
@@ -40,9 +66,6 @@ using MatAug = Eigen::Matrix<Scalar, NA, NA>;
 
 // Wide RHS for the SDA two-right-hand-side solve
 using MatNX2 = Eigen::Matrix<Scalar, NX, 2 * NX>;
-
-// MATLAB eps
-constexpr Scalar MATLAB_EPS = 2.220446049250313e-16;
 
 // ============================================================
 //  In-place symmetrisation.
@@ -76,11 +99,11 @@ struct DARESolverOpts {
     int    min_iters           = 2;      // recommended 2 (MATLAB default 1)
     int    max_iters           = 4;      // recommended 4 (MATLAB default 10)
     bool   early_break         = true;
-    Scalar tolerance           = 1e-4;   // DARE residual threshold
+    Scalar tolerance           = Tol::dare;   // DARE residual threshold
     int    riccati_check_every = 25;     // Riccati branch only
 
     // --- dlyap_fast_c (Smith doubling) parameters ---
-    Scalar dlyap_tolerance     = 1e-14;
+    Scalar dlyap_tolerance     = Tol::dlyap;
     int    dlyap_max_doublings = 60;     // covers rho up to 1 - eps
 
     // --- dare_sda parameters ---

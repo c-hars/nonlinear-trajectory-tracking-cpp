@@ -31,30 +31,39 @@
   #include <vector>
 #endif
 
-constexpr int N_STEPS = 451;
-static double x_traj[N_STEPS * NX];
-static double u_traj[N_STEPS * NU];
-static double r_traj[N_STEPS * NY];
+constexpr int N_STEPS = 381;
+static Scalar x_traj[N_STEPS * NX];
+static Scalar u_traj[N_STEPS * NU];
+static Scalar r_traj[N_STEPS * NY];
 
 #ifdef ARDUINO
-  #include "trajectory_data.h"
+  #include "trajectory_data.h"   // x_traj_data[] etc. stay const double
+
+  template <typename Src, typename Dst>
+  static void copy_narrow(const Src* src, Dst* dst, size_t n) {
+      for (size_t i = 0; i < n; ++i) dst[i] = static_cast<Dst>(src[i]);
+  }
+
   static void load_trajectory_data() {
-      memcpy(x_traj, x_traj_data, sizeof(x_traj));
-      memcpy(u_traj, u_traj_data, sizeof(u_traj));
-      memcpy(r_traj, r_traj_data, sizeof(r_traj));
+      copy_narrow(x_traj_data, x_traj, size_t(N_STEPS) * NX);
+      copy_narrow(u_traj_data, u_traj, size_t(N_STEPS) * NU);
+      copy_narrow(r_traj_data, r_traj, size_t(N_STEPS) * NY);
   }
 #endif
 
 #ifndef ARDUINO
-  static bool load_bin(const char* path, double* buf, size_t n_doubles) {
+  static bool load_bin(const char* path, Scalar* buf, size_t n) {
       FILE* f = std::fopen(path, "rb");
       if (!f) { std::printf("ERROR: cannot open %s\n", path); return false; }
-      size_t got = std::fread(buf, sizeof(double), n_doubles, f);
+      // MATLAB export is always float64 — stage and narrow.
+      std::vector<double> tmp(n);
+      size_t got = std::fread(tmp.data(), sizeof(double), n, f);
       std::fclose(f);
-      if (got != n_doubles) {
-          std::printf("ERROR: %s — expected %zu doubles, got %zu\n", path, n_doubles, got);
+      if (got != n) {
+          std::printf("ERROR: %s — expected %zu doubles, got %zu\n", path, n, got);
           return false;
       }
+      for (size_t i = 0; i < n; ++i) buf[i] = static_cast<Scalar>(tmp[i]);
       return true;
   }
 #endif
@@ -108,8 +117,8 @@ static void generate_dummy_data(const QuadParams& qp) {
     std::memset(r_traj, 0, sizeof(r_traj));
 
     for (int k = 0; k < N_STEPS; ++k) {
-        const double t = k * qp.Ts;
-        double* xk = x_traj + k * NX;
+        const Scalar t = k * qp.Ts;
+        Scalar* xk = x_traj + k * NX;
 
         xk[0] = 1.0 * std::sin(0.6 * t);          // pos
         xk[1] = 1.0 * std::sin(1.2 * t);
@@ -124,11 +133,11 @@ static void generate_dummy_data(const QuadParams& qp) {
         xk[10] = -0.3 * std::sin(1.0 * t);
         xk[11] = 0.1 * std::cos(0.5 * t);
 
-        double* uk = u_traj + k * NU;
+        Scalar* uk = u_traj + k * NU;
         for (int j = 0; j < NU; ++j)
             uk[j] = 5.0 * std::sin(0.8 * t + j);
 
-        double* rk = r_traj + k * NY;
+        Scalar* rk = r_traj + k * NY;
         rk[0] = std::sin(0.6 * t);
         rk[1] = std::sin(1.2 * t);
         rk[2] = 0.5 * std::sin(0.4 * t);
