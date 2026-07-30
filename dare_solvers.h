@@ -342,7 +342,12 @@ inline MatNX iterative_dare(
         break;
     }
 
-    info.tol_achieved  = compute_dare_residual(A, B, Q, R, P);
-    info.solve_success = (info.tol_achieved < opts.tolerance);
+    if (opts.early_break == 1) {
+        info.tol_achieved  = compute_dare_residual(A, B, Q, R, P);
+        info.solve_success = (info.tol_achieved < opts.tolerance);
+    } else {
+        info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();
+        info.solve_success = false;
+    }
     return P;
 }
