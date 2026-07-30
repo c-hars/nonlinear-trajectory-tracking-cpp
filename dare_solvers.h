@@ -13,15 +13,26 @@
 // ============================================================
 //  compute_gain
 //    K = (R + B'PB)^{-1} B'PA
+//  5-arg form also returns the LDLT of S = R + B'PB so the
+//  caller can reuse the factorisation for the feedforward
+//  solve instead of forming and factorising S a second time.
 // ============================================================
+inline MatNUNX compute_gain(
+    const MatNXNU& B, const MatNU& R,
+    const MatNX& P, const MatNX& A,
+    Eigen::LDLT<MatNU>& S_ldlt)
+{
+    const MatNUNX BtP = B.transpose() * P;   // 6x12
+    S_ldlt.compute(R + BtP * B);             // 6x6 SPD
+    return S_ldlt.solve(BtP * A);
+}
+
 inline MatNUNX compute_gain(
     const MatNXNU& B, const MatNU& R,
     const MatNX& P, const MatNX& A)
 {
-    const MatNUNX BtP = B.transpose() * P; // B is 12x6, Bt is 6x12, BtP is 6x12 = NuNX
-    const MatNU   S   = R + BtP * B;   // 6x6 SPD
-    const MatNUNX rhs = BtP * A;       // 6x12
-    return S.ldlt().solve(rhs);
+    Eigen::LDLT<MatNU> S_ldlt;
+    return compute_gain(B, R, P, A, S_ldlt);
 }
 
 // ============================================================
