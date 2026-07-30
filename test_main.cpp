@@ -208,7 +208,7 @@ static void run_timing_test() {
     int n_fallback = 0, n_fail = 0;
     Scalar worst_res = 0;
 
-    PRINT("   k,   sdc,  dare,    ff, total, it,   res, ok, fb\n");
+    PRINT("   k,   sdc,  dare,    ff, total, it,     res, ok, fb\n");
 
     for (int k = 1; k <= N_STEPS; ++k) {
         const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX);
@@ -244,7 +244,7 @@ static void run_timing_test() {
         (void)u;
     }
 
-    PRINT("\n--- Timing (us) ---%8s%8s%8s%8s\n", "sdc", "dare", "ff", "total");
+    PRINT("\n--- Timing (us) ---%4s%8s%8s%8s\n", "sdc", "dare", "ff", "total");
     PRINT("  median: %13.0f%8.0f%8.0f%8.0f\n",
           pct(t_sdc,50), pct(t_dare,50), pct(t_ff,50), pct(t_tot,50));
     PRINT("  p95:    %13.0f%8.0f%8.0f%8.0f\n",

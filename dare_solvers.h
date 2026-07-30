@@ -119,8 +119,7 @@ inline MatNX dlyap_fast_c(
         // saves roughly half of the second product per doubling.
         const MatNX T = P * X;
         MatNX inc;
-        inc.triangularView<Eigen::Lower>() = T * P.transpose();
-        inc.triangularView<Eigen::StrictlyUpper>() = inc.transpose();
+        inc.noalias() = T * P.transpose();
         X += inc;
 
         ninc            = inc.norm();
@@ -142,8 +141,6 @@ inline MatNX dlyap_fast_c(
         ninc_prev = ninc;
         P = (P * P).eval();
     }
-
-    // symmetrise(X) pass is no longer needed — redundant after using the upper triangular construction
 
     info.doublings     = j;
     info.rel_increment = ninc / std::max(X.norm(), SCALAR_EPS);
