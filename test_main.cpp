@@ -33,7 +33,7 @@
   #include <vector>
 #endif
 
-constexpr int N_STEPS = 381;
+constexpr int N_STEPS = 501;
 static Scalar x_traj[N_STEPS * NX];
 static Scalar u_traj[N_STEPS * NU];
 static Scalar r_traj[N_STEPS * NY];

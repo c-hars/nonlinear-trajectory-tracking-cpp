@@ -18,7 +18,7 @@ constexpr int NY = 6;    // outputs (rows of C)
 
 // ---- Scalar type --------------------------------------------
 #ifndef SDDRE_USE_FLOAT
-  #define SDDRE_USE_FLOAT 1
+  #define SDDRE_USE_FLOAT 0
 #endif
 
 #if SDDRE_USE_FLOAT
@@ -27,7 +27,6 @@ constexpr int NY = 6;    // outputs (rows of C)
   using Scalar = double;
 #endif
 constexpr Scalar SCALAR_EPS = std::numeric_limits<Scalar>::epsilon();
-// constexpr double MATLAB_EPS = 2.220446049250313e-16; % 2^-52, double precision, SCALAR_EPS supersedes this
 
 // ---- Precision-dependent numerical tolerances ---------------
 //  Kept together deliberately: every constant here is tied to the
@@ -40,7 +39,7 @@ template <> struct sddre_tol<double> {
 };
 
 template <> struct sddre_tol<float> {
-    static constexpr float dlyap = 1e-5f;    // ~84 * eps(float)
+    static constexpr float dlyap = 5e-6f; // ~42 * eps(float)
     static constexpr float dare  = 1e-4f;
 };
 
