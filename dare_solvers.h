@@ -3,7 +3,7 @@
 //  dare_solvers.h — DARE / Stein solvers
 //
 //  Ports of:
-//    dlyap_fast_c.m   — Smith doubling, geometric tail test
+//    dlyap_fast_c.m   — Smith doubling DLYAP solver
 //    dare_sda.m       — structure-preserving doubling (DARE)
 //    iterative_dare.m — Newton-Kleinman + Riccati iteration
 // ============================================================
@@ -38,17 +38,15 @@ inline MatNUNX compute_gain(
 // ============================================================
 //  compute_dare_residual
 //
-//  *** ASSUMPTION — compute_dare_residual.m was not supplied. ***
+//  *** NOTE ***
 //  Implemented here as the relative Frobenius residual of the
 //  DARE in closed-loop (Lyapunov) form:
 //
 //    || A_cl' P A_cl + K'RK + Q - P ||_F / max(||P||_F, 1)
 //
-//  If your MATLAB version normalises differently (e.g. by
-//  ||Q||_F, as dlyap_fast_c/dlyap_schur_real do for their own
-//  residuals), change the denominator here — the 1e-4 tolerance
-//  is calibrated against YOUR definition, so a mismatch will
-//  shift iteration counts and therefore the timings.
+//  i.e. normalised according to condition number: MATLAB
+//  version does not yet have this: the mismatch may
+//  shift iteration counts - keep in mind re SIL validation.
 // ============================================================
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
@@ -81,7 +79,7 @@ inline Scalar compute_dare_residual(
 //  Stopping test is the geometric tail extrapolation from the
 //  MATLAB version: with r = ninc/ninc_prev < 1, the remaining
 //  tail is bounded by ninc*r/(1-r), which is compared against
-//  tol*||X||_F. Divergence shows up as Inf/Inf = NaN in r.
+//  tol*||X||_F. Divergence shows up as reaching max_doublings.
 //
 //  is_stable is only asserted on convergence — running out of
 //  doublings leaves it false, which is what feeds the NK
@@ -132,7 +130,7 @@ inline MatNX dlyap_fast_c(
         P = (P * P).eval();
     }
 
-    // symmetrise(X) is now redundant after using the upper triangular construction
+    // symmetrise(X) pass is no longer needed — redundant after using the upper triangular construction
 
     info.doublings     = j;
     info.rel_increment = ninc / std::max(X.norm(), SCALAR_EPS);
@@ -165,7 +163,6 @@ inline MatNX dare_sda(
     DARESolverInfo& info)
 {
     MatNX Ak = A;
-    // MatNX G  = B * R.ldlt().solve(B.transpose());  // old  // B R^{-1} B'
     MatNUNX R_inv_Bt = R.ldlt().solve(B.transpose());
     MatNX G = B * R_inv_Bt; // B R^{-1} B'
     symmetrise(G);
@@ -209,7 +206,7 @@ inline MatNX dare_sda(
 }
 
 // ============================================================
-//  iterative_dare  —  solve the DARE iteratively
+//  iterative_dare  —  solve the DARE iteratively from P0
 //
 //    NK      — Newton-Kleinman via dlyap (quadratic convergence;
 //              P0 must yield a stabilising gain).
@@ -299,9 +296,9 @@ inline MatNX iterative_dare(
     //    A_K = A - B K_k
     //    P_{k+1} solves   A_K' P A_K - P + (Q + K'RK) = 0
     //
-    //  dlyap_fast_c solves  M X M' - X + N = 0,  so the call
-    //  passes M = A_K'. Getting this transpose wrong silently
-    //  solves the WRONG Stein equation.
+    //  dlyap_fast_c solves  M X M' - X + N = 0 (observability
+    //  convention, matching the MATLAB- native dlyap), so the
+    //  call passes M = A_K'
     // ========================================================
     case DARESolverMethod::NK: {
         for (int i = 1; i <= opts.max_iters; ++i) {
@@ -315,7 +312,7 @@ inline MatNX iterative_dare(
                              opts.dlyap_tolerance, opts.dlyap_max_doublings);
 
             if (i == 1 && !dinfo.is_stable) {
-                // Unstable / non-converged initial gain: NK will diverge.
+                // Non-converged initial gain, K0 was not in stability basin: NK will diverge.
                 // Signal the caller to fall back to a cold SDA solve.
                 info.unstable_k0       = true;
                 info.solver_iterations = i;

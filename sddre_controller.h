@@ -6,8 +6,8 @@
 //
 //  The Wex (weighted-reference) cache uses a flat buffer.
 //  Default: heap-allocated std::vector, built once per
-//  trajectory. For hard-real-time, swap for a static array
-//  sized to your longest trajectory + preview padding.
+//  trajectory. Later: will be swapped for a static array
+//  (sized to the constant-length preview window).
 // ============================================================
 
 #include "sddre_types.h"
@@ -212,14 +212,14 @@ public:
 
 private:
     // ---- Persistent state (MATLAB `persistent P_ss K_ss`) ---
-    MatNX   P_ss_ = MatNX::Zero();
-    MatNUNX K_ss_ = MatNUNX::Zero();
+    MatNX   P_ss_ = MatNX::Zero();      // Riccati matrix
+    MatNUNX K_ss_ = MatNUNX::Zero();    // Riccati gain
 
     // ---- Cached constant weight products --------------------
     //  Depend only on C, Qy, Qyf. Rebuilt by reset().
     MatNX   Q_     = MatNX::Zero();     // C' * Qy * C
-    MatNXNY CtQy_  = MatNXNY::Zero();
-    MatNXNY CtQyf_ = MatNXNY::Zero();
+    MatNXNY CtQy_  = MatNXNY::Zero();   // C' * Qy
+    MatNXNY CtQyf_ = MatNXNY::Zero();   // C' * Qyf
 
     // ---- Wex cache ------------------------------------------
     //  Wex = C'*Qy * rpad,  rpad = [r_, repmat(r_(:,end), 1, M+1)]

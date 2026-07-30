@@ -18,7 +18,7 @@ constexpr int NY = 6;    // outputs (rows of C)
 
 // ---- Scalar type --------------------------------------------
 #ifndef SDDRE_USE_FLOAT
-  #define SDDRE_USE_FLOAT 0
+  #define SDDRE_USE_FLOAT 1
 #endif
 
 #if SDDRE_USE_FLOAT
@@ -30,7 +30,9 @@ constexpr Scalar SCALAR_EPS = std::numeric_limits<Scalar>::epsilon();
 
 // ---- Precision-dependent numerical tolerances ---------------
 //  Kept together deliberately: every constant here is tied to the
-//  unit roundoff of Scalar and is wrong if copied across precisions.
+//  unit roundoff of Scalar, and is wrong if blindly copied across
+//  precisions.
+
 template <typename S> struct sddre_tol;
 
 template <> struct sddre_tol<double> {
@@ -95,15 +97,15 @@ enum class DARESolverMethod { NK, Riccati, SDA };
 
 struct DARESolverOpts {
     DARESolverMethod method = DARESolverMethod::NK;
-    int    min_iters           = 2;      // recommended 2 (MATLAB default 1)
-    int    max_iters           = 4;      // recommended 4 (MATLAB default 10)
+    int    min_iters           = 1;       // recommended default
+    int    max_iters           = 10;      // conservative default
     bool   early_break         = true;
     Scalar tolerance           = Tol::dare;   // DARE residual threshold
     int    riccati_check_every = 25;     // Riccati branch only
 
     // --- dlyap_fast_c (Smith doubling) parameters ---
     Scalar dlyap_tolerance     = Tol::dlyap;
-    int    dlyap_max_doublings = 60;     // covers rho up to 1 - eps
+    int    dlyap_max_doublings = 60;     // covers rho up to 1 - 2^52 (double precision). TODO LATER: single/double-dependent max_doublings
 
     // --- dare_sda parameters ---
     int    sda_min_doublings   = 1;
@@ -140,11 +142,11 @@ struct SDDRESolveInfo {
 struct QuadParams {
     Scalar Ts    = 0.01;      // sample period            [s]
     Scalar m     = 5.0;       // mass                     [kg]
-    Scalar I_xx  = 0.008;       // inertia                  [kg m^2]
+    Scalar I_xx  = 0.008;     // inertia                  [kg m^2]
     Scalar I_yy  = 0.009;
     Scalar I_zz  = 0.015;
-    Scalar kF    = 0.000015;       // thrust coefficient
-    Scalar kM    = 0.00000015;       // drag / reaction-torque coefficient
+    Scalar kF    = 0.000015;    // thrust coefficient
+    Scalar kM    = 0.00000015;  // drag / reaction-torque coefficient
 
     VecNU  nominal_omegas = VecNU::Zero();  // hover rotor speeds
     VecNU  max_du         = VecNU::Zero();  // upper clamp on delta_u

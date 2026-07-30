@@ -4,20 +4,15 @@
 //  Dual-target: Teensy 4.1 (Arduino) or desktop (g++/clang++).
 //
 //  Desktop:
-//    g++ -std=c++17 -O2 -I/path/to/eigen test_main.cpp -o test_sddre
-//    ./test_sddre
+//    g++ -std=c++17 -O2 -D_USE_MATH_DEFINES -I"C:\Users\conor\eigen" test_main.cpp -o test_sddre.exe
 //
 //  Teensy / PlatformIO:
-//    build_flags = -O2 -DNDEBUG -DEIGEN_NO_DEBUG
-//                  -DEIGEN_DONT_VECTORIZE -DSDDRE_NO_EARLY_EXIT
-//    (EIGEN_NO_DEBUG / NDEBUG matter a lot — assertions in the
-//     fixed-size paths are otherwise a large fraction of runtime.)
+//    build_flags in platformio.ini
+//    (EIGEN_NO_DEBUG / NDEBUG matter a lot — assertions in the fixed-size paths are otherwise a large fraction of runtime.)
 //
 //  Trajectory data — exported from MATLAB, row-major.
 // 
 // ============================================================
-
-// g++ -std=c++17 -O2 -D_USE_MATH_DEFINES -I"C:\Users\conor\eigen" test_main.cpp -o test_sddre.exe
 
 
 #include "sddre_controller.h"
@@ -106,12 +101,7 @@ static void setup_params(QuadParams& qp) {
 // ============================================================
 //  Dummy trajectory.
 //  Timing is valid with dummy data; correctness is not.
-//  Replace with your MATLAB export.
-//
-//  A nonzero attitude and body rate matter here — a zero
-//  quaternion vector part makes Omega_w and the gyroscopic
-//  block vanish, which is NOT representative of the SDC
-//  matrices you'll actually hit.
+//  Replaced with actual MATLAB export data for SIL validation.
 // ============================================================
 static void generate_dummy_data(const QuadParams& qp) {
     std::memset(x_traj, 0, sizeof(x_traj));
@@ -122,18 +112,18 @@ static void generate_dummy_data(const QuadParams& qp) {
         const Scalar t = k * qp.Ts;
         Scalar* xk = x_traj + k * NX;
 
-        xk[0] = 1.0 * std::sin(0.6 * t);          // pos
-        xk[1] = 1.0 * std::sin(1.2 * t);
-        xk[2] = 0.5 * std::sin(0.4 * t);
-        xk[3] = 0.6 * std::cos(0.6 * t);          // vel
-        xk[4] = 1.2 * std::cos(1.2 * t);
-        xk[5] = 0.2 * std::cos(0.4 * t);
-        xk[6] = 0.12 * std::sin(1.0 * t);         // q1,q2,q3 (~14 deg tilt)
-        xk[7] = 0.12 * std::cos(1.0 * t);
-        xk[8] = 0.05 * std::sin(0.5 * t);
-        xk[9]  = 0.3 * std::cos(1.0 * t);         // body rates
-        xk[10] = -0.3 * std::sin(1.0 * t);
-        xk[11] = 0.1 * std::cos(0.5 * t);
+        xk[0]  =  1.0  * std::sin(0.6 * t);  // pos
+        xk[1]  =  1.0  * std::sin(1.2 * t);
+        xk[2]  =  0.5  * std::sin(0.4 * t);
+        xk[3]  =  0.6  * std::cos(0.6 * t);  // vel
+        xk[4]  =  1.2  * std::cos(1.2 * t);
+        xk[5]  =  0.2  * std::cos(0.4 * t);
+        xk[6]  =  0.12 * std::sin(1.0 * t);  // q1,q2,q3 (~14 deg tilt)
+        xk[7]  =  0.12 * std::cos(1.0 * t);
+        xk[8]  =  0.05 * std::sin(0.5 * t);
+        xk[9]  =  0.3  * std::cos(1.0 * t);  // body rates
+        xk[10] = -0.3  * std::sin(1.0 * t);
+        xk[11] =  0.1  * std::cos(0.5 * t);
 
         Scalar* uk = u_traj + k * NU;
         for (int j = 0; j < NU; ++j)

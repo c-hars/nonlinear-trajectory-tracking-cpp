@@ -26,7 +26,7 @@ inline MatNX get_A_sdc_quaternion(const VecNX& x, const QuadParams& qp)
 
     // q0 from the norm constraint. Clamped at 0 so a slightly
     // over-unity vector part can't produce NaN — MATLAB would
-    // go complex here and warn below 0.1.
+    // go complex here and loud warn below 0.01.
     const Scalar q0sq = Scalar(1) - q1 * q1 - q2 * q2 - q3 * q3;
     const Scalar q0   = std::sqrt(std::max(q0sq, Scalar(0)));
 
@@ -51,16 +51,16 @@ inline MatNX get_A_sdc_quaternion(const VecNX& x, const QuadParams& qp)
     A.block<3,3>(0, 3) = C_Ib;
 
     // ---- Coriolis ------------------------------------------
-    // Deliberately omitted (same treatment as the Euler
-    // formulation):  A.block<3,3>(3,3) = -skew(w);
+    // Deliberately omitted (same treatment as all SDC
+    // factorisations):  A.block<3,3>(3,3) = -skew(w);
 
     // ---- Gravity residual, "symmetric split" factorisation --
     //  Exploits 1 - q0^2 = q1^2 + q2^2 + q3^2 so the affine
     //  term folds into the SDC form.
     Mat3 Ag;
-    Ag <<     -q3,  2*q0,   -q1,
-           -2*q0,   -q3,    -q2,
-            2*q1,  2*q2,      0;
+    Ag <<     -q3,  2*q0,    -q1,
+            -2*q0,   -q3,    -q2,
+             2*q1,  2*q2,      0;
     A.block<3,3>(3, 6) = g * Ag;
 
     // ---- Quaternion kinematics ------------------------------
@@ -89,8 +89,7 @@ inline MatNX get_A_sdc_quaternion(const VecNX& x, const QuadParams& qp)
 // ============================================================
 //  get_B_sdc  —  SDC mixer
 //
-//  Uses the SDC-factorised thrust  (2*w_nom + du)  rather than
-//  the true nonlinear  w = w_nom + du,  so that B(du)*du
+//  Uses the SDC-factorised thrust  (2*w_nom + du) so that B(du)*du
 //  reproduces the quadratic  kF*w^2  term exactly.
 // ============================================================
 inline MatNXNU get_B_sdc(const VecNU& delta_u, const QuadParams& qp)
@@ -123,7 +122,11 @@ inline MatNXNU get_B_sdc(const VecNU& delta_u, const QuadParams& qp)
 //  exponential comes out as [Ad Bd; 0 I].  expm_pade_vanloan
 //  carries only the (P,Q,c) triple through the same Pade
 //  builders, so the zero blocks are never multiplied and the
-//  final solve is 12x12 rather than 18x18.  ~2.3x.
+//  final solve is 12x12 rather than 18x18.
+// 
+//  ~2.3x faster than the structure-disregarding baseline:
+//      M = expm([Ac Bc; 0 0] * Ts)
+//      Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
 // ============================================================
 inline void c2d_zoh_expm(
     const MatNX& Ac, const MatNXNU& Bc, Scalar Ts,
@@ -131,29 +134,3 @@ inline void c2d_zoh_expm(
 {
     expm_pade_vanloan(Ac, Bc, Ts, Ad, Bd);
 }
-
-// // ============================================================
-// //  c2d_zoh_expm  —  ZOH discretisation via Van Loan's method
-// //                   (doi:10.1109/tac.1978.1101743)
-// //
-// //    M = expm([Ac Bc; 0 0] * Ts)
-// //    Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
-// //
-// //  The augmented matrix is 18x18 here. Its bottom NU rows are
-// //  zero, so the exponential has the structure [Ad Bd; 0 I] —
-// //  exploitable, but the general expm keeps this auditable and
-// //  the cost is already modest.
-// // ============================================================
-// inline void c2d_zoh_expm(
-//     const MatNX& Ac, const MatNXNU& Bc, Scalar Ts,
-//     MatNX& Ad, MatNXNU& Bd)
-// {
-//     MatAug M = MatAug::Zero();
-//     M.topLeftCorner<NX, NX>()  = Ac * Ts;
-//     M.topRightCorner<NX, NU>() = Bc * Ts;
-
-//     const MatAug E = expm_pade(M);
-
-//     Ad = E.topLeftCorner<NX, NX>();
-//     Bd = E.topRightCorner<NX, NU>();
-// }

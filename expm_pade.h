@@ -7,9 +7,12 @@
 //  26(4):1179-1193.  Same algorithm family as MATLAB's expm.
 //
 //  Hand-rolled rather than <unsupported/Eigen/MatrixFunctions>
-//  so the cost is predictable and the code is auditable — for
-//  a Teensy timing benchmark you want to know exactly which
-//  branch you're paying for.
+//  so the cost is predictable, the code is auditable, and the
+//  exactness can be tuned — machine precision by default, but
+//  this is is likely not needed in practice: a dial for
+//  optimisation later, as required. And for this Teensy timing
+//  benchmark you want to know exactly which branch you're
+//  paying for.
 //
 //  Precision dispatch
 //  ------------------
@@ -26,12 +29,9 @@
 //  backward-error target ~9 orders tighter than float roundoff.
 //  (Same degree sets as Eigen's MatrixExponential.h.)
 //
-//  Cost at Ts <= 0.05 for the augmented 18x18:
-//    double -> m = 7 or 9, s = 0  (3-4 GEMMs + one 18x18 LU)
-//    float  -> m = 3 or 5, s = 0  (1-2 GEMMs + one 18x18 LU)
 // ============================================================
 
-// https://sci-hub.st/10.1137/1.9780898717778.ch10
+// doi:10.1137/1.9780898717778.ch10
 // https://www.cis.upenn.edu/~cis6100/higham_matrix_exponential_siam_2004.pdf
 
 #include <Eigen/Dense>
@@ -71,6 +71,12 @@ struct expm_pade_traits<float> {
 //    U = odd part * A,  V = even part,  r_m = (V-U)^{-1}(V+U)
 // ------------------------------------------------------------
 namespace expm_detail {
+
+// Dense Eigen matrix: N diagonal adds instead of N² fill + N² scaled add.
+template <typename MatT>
+inline void diag_add(MatT& X, typename MatT::Scalar s) {
+    X.diagonal().array() += s;
+}
 
 template <typename MatT>
 inline void pade3(const MatT& A, MatT& U, MatT& V) {
@@ -158,8 +164,6 @@ MatT expm_pade(const MatT& Ain)
     using Th = expm_pade_traits<S>;
     static_assert(MatT::RowsAtCompileTime > 0,
                   "expm_pade requires a fixed-size matrix");
-
-    // ---- no more MatT I = MatT::Identity() ----
 
     const S nA = Ain.cwiseAbs().colwise().sum().maxCoeff();
 
@@ -263,21 +267,6 @@ inline BlockUT<S,N,M> operator*(const S& k, const BlockUT<S,N,M>& a) {
     return { k * a.P, k * a.Q, k * a.c };
 }
 
-}  // namespace expm_detail
-
-// ------------------------------------------------------------
-// diag_add()
-// ------------------------------------------------------------
-
-namespace expm_detail {
-
-// Dense Eigen matrix: N diagonal adds instead of N² fill + N² scaled add.
-template <typename MatT>
-inline void diag_add(MatT& X, typename MatT::Scalar s) {
-    X.diagonal().array() += s;
-}
-
-// BlockUT: scalar*I adds s to P's diagonal and to the bottom-right scalar.
 template <typename S, int N, int M>
 inline void diag_add(BlockUT<S,N,M>& X, S s) {
     X.P.diagonal().array() += s;
