@@ -60,6 +60,16 @@ public:
         P_ss_.setZero();
         K_ss_.setZero();
         wex_valid_ = false;
+        rebuild_weight_cache();
+    }
+
+    // Call this if C, Qy or Qyf change without a full reset().
+    void rebuild_weight_cache() {
+        CtQy_  = C.transpose() * Qy;
+        CtQyf_ = C.transpose() * Qyf;
+        Q_     = CtQy_ * C;
+        symmetrise(Q_);
+        wex_valid_ = false;      // Wex depends on CtQy_
     }
 
     // =========================================================
@@ -92,22 +102,19 @@ public:
         // ------------------------------------------------
         t0 = _sddre_micros();
 
-        MatNX Q = C.transpose() * Qy * C;   // 12x12
-        symmetrise(Q);
-
         DARESolverOpts dare_opts = opts.dare;
         if (k == 1) dare_opts.method = DARESolverMethod::SDA;  // cold init
 
         DARESolverInfo dare_info;
 
         if (dare_opts.method == DARESolverMethod::SDA) {
-            P_ss_ = dare_sda(A, B, Q, R, dare_opts.tolerance,
+            P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                              dare_opts.sda_min_doublings,
                              dare_opts.sda_max_doublings, dare_info);
             K_ss_ = compute_gain(B, R, P_ss_, A);
 
         } else {
-            P_ss_ = iterative_dare(A, B, Q, R, P_ss_, dare_opts, dare_info);
+            P_ss_ = iterative_dare(A, B, Q_, R, P_ss_, dare_opts, dare_info);
             K_ss_ = compute_gain(B, R, P_ss_, A);
 
             // NK fallback: cold SDA when the warm start is destabilising.
@@ -115,7 +122,7 @@ public:
                 !dare_info.solve_success && dare_info.unstable_k0)
             {
                 DARESolverInfo sda_info;
-                P_ss_ = dare_sda(A, B, Q, R, dare_opts.tolerance,
+                P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                                  dare_opts.sda_min_doublings,
                                  dare_opts.sda_max_doublings, sda_info);
                 K_ss_ = compute_gain(B, R, P_ss_, A);
@@ -137,6 +144,7 @@ public:
 
         const MatNX   A_cl = A - B * K_ss_;
         const MatNXNY CtQy = C.transpose() * Qy;              // 12x6
+        const MatNXNY CtQyf = C.transpose() * Qyf;              // 12x6
         const MatNU   S    = R + B.transpose() * P_ss_ * B;   // 6x6 SPD
 
         VecNU u;
@@ -171,20 +179,20 @@ public:
 
             } else {
                 // ---- Terminal: full finite-horizon LQT recursion ----
-                MatNX P_term = C.transpose() * Qyf * C;
+                MatNX P_term = CtQyf * C;
                 symmetrise(P_term);
 
                 const int M_cl = std::min(M, r_len - k);
 
                 const Eigen::Map<const VecNY> r_end(
                     r_data + (k + M_cl - 1) * NY);
-                VecNX v = C.transpose() * Qyf * r_end;
+                VecNX v = CtQyf * r_end;
 
                 for (int j = M_cl - 1; j >= 1; --j) {
                     const MatNUNX K_j    = compute_gain(B, R, P_term, A);
                     const MatNX   A_cl_j = A - B * K_j;
 
-                    P_term = (Q + K_j.transpose() * R * K_j
+                    P_term = (Q_ + K_j.transpose() * R * K_j
                             + A_cl_j.transpose() * P_term * A_cl_j).eval();
                     symmetrise(P_term);
 
@@ -207,6 +215,12 @@ private:
     // ---- Persistent state (MATLAB `persistent P_ss K_ss`) ---
     MatNX   P_ss_ = MatNX::Zero();
     MatNUNX K_ss_ = MatNUNX::Zero();
+
+    // ---- Cached constant weight products --------------------
+    //  Depend only on C, Qy, Qyf. Rebuilt by reset().
+    MatNX   Q_     = MatNX::Zero();     // C' * Qy * C
+    MatNXNY CtQy_  = MatNXNY::Zero();
+    MatNXNY CtQyf_ = MatNXNY::Zero();
 
     // ---- Wex cache ------------------------------------------
     //  Wex = C'*Qy * rpad,  rpad = [r_, repmat(r_(:,end), 1, M+1)]
