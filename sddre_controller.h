@@ -248,7 +248,7 @@ private:
         wex_valid_ = true;
     }
 
-    // 1-based MATLAB column -> 0-based buffer index
+    // 1-based MATLAB column -> 0-based buffer index. Open for debate Eigen::Map<const VecNX> instead of VecNX. No measurable performance increase, yet usage consequences.
     VecNX wex_col(int matlab_col) const {
         return Eigen::Map<const VecNX>(
             wex_buf_.data() + static_cast<size_t>(matlab_col - 1) * NX);
