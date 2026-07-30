@@ -145,9 +145,6 @@ public:
         t0 = _sddre_micros();
 
         const MatNX   A_cl = A - B * K_ss_;
-        const MatNXNY CtQy = C.transpose() * Qy;              // 12x6
-        const MatNXNY CtQyf = C.transpose() * Qyf;              // 12x6
-        // const MatNU   S    = R + B.transpose() * P_ss_ * B;   // 6x6 SPD
 
         VecNU u;
 
@@ -155,7 +152,7 @@ public:
             // ---- Constant-reference approximation ----------
             const Eigen::Map<const VecNY> r_k(r_data + (k - 1) * NY);
             const MatNX I_minus_Ft = MatNX::Identity() - A_cl.transpose();
-            const VecNX s = I_minus_Ft.partialPivLu().solve(CtQy * r_k);
+            const VecNX s = I_minus_Ft.partialPivLu().solve(CtQy_ * r_k);
             u = -K_ss_ * xk + S_ldlt.solve(B.transpose() * s);
 
         } else {
@@ -167,7 +164,7 @@ public:
                   (opts.use_full_fh_mpc_at_terminal && approaching_terminal)))
             {
                 // ---- Preview costate sweep (d = 1 branch) ---
-                rebuild_wex_if_needed(CtQy, M);
+                rebuild_wex_if_needed(CtQy_, M);
 
                 const MatNX F = A_cl.transpose();
 
@@ -181,14 +178,14 @@ public:
 
             } else {
                 // ---- Terminal: full finite-horizon LQT recursion ----
-                MatNX P_term = CtQyf * C;
+                MatNX P_term = CtQyf_ * C;
                 symmetrise(P_term);
 
                 const int M_cl = std::min(M, r_len - k);
 
                 const Eigen::Map<const VecNY> r_end(
                     r_data + (k + M_cl - 1) * NY);
-                VecNX v = CtQyf * r_end;
+                VecNX v = CtQyf_ * r_end;
 
                 for (int j = M_cl - 1; j >= 1; --j) {
                     const MatNUNX K_j    = compute_gain(B, R, P_term, A);
@@ -200,7 +197,7 @@ public:
 
                     const Eigen::Map<const VecNY> r_j(
                         r_data + (k + j - 1) * NY);
-                    v = A_cl_j.transpose() * v + CtQy * r_j;
+                    v = A_cl_j.transpose() * v + CtQy_ * r_j;
                 }
 
                 Eigen::LDLT<MatNU> S_term_ldlt;
