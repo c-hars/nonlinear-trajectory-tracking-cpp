@@ -92,7 +92,13 @@ inline MatNX dlyap_fast_c(
 
     int j = 1;
     for (j = 1; j <= max_doublings; ++j) {
-        const MatNX inc = P * X * P.transpose();
+        // X is symmetric, so inc = P X P' is too. Form T = P X in
+        // full, then only the lower triangle of T P', and mirror —
+        // saves roughly half of the second product per doubling.
+        const MatNX T = P * X;
+        MatNX inc;
+        inc.triangularView<Eigen::Lower>() = T * P.transpose();
+        inc.triangularView<Eigen::StrictlyUpper>() = inc.transpose();
         X += inc;
 
         ninc            = inc.norm();
@@ -115,9 +121,7 @@ inline MatNX dlyap_fast_c(
         P = (P * P).eval();
     }
 
-    // Q is symmetric by construction in the NK call (Q + K'RK),
-    // so symmetrise unconditionally — no ishermitian() check.
-    symmetrise(X);
+    // symmetrise(X) is now redundant after using the upper triangular construction
 
     info.doublings     = j;
     info.rel_increment = ninc / std::max(X.norm(), SCALAR_EPS);
