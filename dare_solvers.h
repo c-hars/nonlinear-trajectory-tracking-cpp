@@ -18,8 +18,9 @@ inline MatNUNX compute_gain(
     const MatNXNU& B, const MatNU& R,
     const MatNX& P, const MatNX& A)
 {
-    const MatNU   S   = R + B.transpose() * P * B;   // 6x6 SPD
-    const MatNUNX rhs = B.transpose() * P * A;       // 6x12
+    const MatNUNX BtP = B.transpose() * P; // B is 12x6, Bt is 6x12, BtP is 6x12 = NuNX
+    const MatNU   S   = R + BtP * B;   // 6x6 SPD
+    const MatNUNX rhs = BtP * A;       // 6x12
     return S.ldlt().solve(rhs);
 }
 
