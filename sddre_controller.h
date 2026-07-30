@@ -116,8 +116,9 @@ public:
             K_ss_ = compute_gain(B, R, P_ss_, A, S_ldlt);
 
         } else {
-            P_ss_ = iterative_dare(A, B, Q_, R, P_ss_, dare_opts, dare_info);
-            K_ss_ = compute_gain(B, R, P_ss_, A, S_ldlt);
+            // C2: gain + S factorisation come back from the solver.
+            P_ss_ = iterative_dare(A, B, Q_, R, P_ss_, dare_opts,
+                                   K_ss_, S_ldlt, dare_info);
 
             // NK fallback: cold SDA when the warm start is destabilising.
             if (dare_opts.method == DARESolverMethod::NK &&
@@ -133,7 +134,18 @@ public:
                 dare_info.solver_iterations = sda_info.solver_iterations;
                 dare_info.solve_success     = sda_info.solve_success;
                 dare_info.used_sda_fallback = true;   // MATLAB's 0.5 flag
+                dare_info.tol_is_estimate   = false;
             }
+        }
+
+        // C3: optional true-residual health check, reusing the gain.
+        // Overwrites the NK increment-based estimate with the directly
+        // evaluated relative residual (this is what SIL should compare).
+        if (opts.post_residual_check) {
+            const Scalar res = compute_dare_residual(A, B, Q_, R, P_ss_, K_ss_);
+            dare_info.tol_achieved    = res;
+            dare_info.solve_success   = (res < dare_opts.tolerance);
+            dare_info.tol_is_estimate = false;
         }
 
         info.dare_info    = dare_info;

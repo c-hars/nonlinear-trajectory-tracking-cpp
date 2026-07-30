@@ -17,14 +17,27 @@
 //  caller can reuse the factorisation for the feedforward
 //  solve instead of forming and factorising S a second time.
 // ============================================================
+// 6-arg form additionally returns S itself, which the NK
+// Newton-increment test needs explicitly (LDLT alone doesn't
+// hand S back cheaply).
+inline MatNUNX compute_gain(
+    const MatNXNU& B, const MatNU& R,
+    const MatNX& P, const MatNX& A,
+    Eigen::LDLT<MatNU>& S_ldlt, MatNU& S_out)
+{
+    const MatNUNX BtP = B.transpose() * P;   // 6x12
+    S_out = R + BtP * B;                     // 6x6 SPD
+    S_ldlt.compute(S_out);
+    return S_ldlt.solve(BtP * A);
+}
+
 inline MatNUNX compute_gain(
     const MatNXNU& B, const MatNU& R,
     const MatNX& P, const MatNX& A,
     Eigen::LDLT<MatNU>& S_ldlt)
 {
-    const MatNUNX BtP = B.transpose() * P;   // 6x12
-    S_ldlt.compute(R + BtP * B);             // 6x6 SPD
-    return S_ldlt.solve(BtP * A);
+    MatNU S;
+    return compute_gain(B, R, P, A, S_ldlt, S);
 }
 
 inline MatNUNX compute_gain(
@@ -212,18 +225,38 @@ inline MatNX dare_sda(
 //              P0 must yield a stabilising gain).
 //    Riccati — direct DARE recursion (linear convergence;
 //              globally stable from any PSD P0).
+//
+//  C1 — the NK convergence test uses the Newton-increment
+//  identity instead of the full DARE residual. For the exact
+//  Stein solve (completion of squares on the DARE),
+//
+//      R(P_{i+1}) = -(K_{i+1}-K_i)' (R + B'P_{i+1}B) (K_{i+1}-K_i)
+//
+//  so ||dK' S dK||_F / max(||P||_F, 1) IS the relative residual,
+//  exact up to the dlyap tolerance — and K_{i+1}, S are needed
+//  for the next iteration anyway, so the check is nearly free
+//  (no A_cl, no A_cl'PA_cl). tol_is_estimate is set on this
+//  path; enable SDDREOpts::post_residual_check (C3) to get the
+//  directly-evaluated residual back as a health signal.
+//
+//  C2 — returns the gain of the final P in K_out and its
+//  S = R + B'PB factorisation in S_ldlt, so the caller doesn't
+//  recompute either.
 // ============================================================
 inline MatNX iterative_dare(
     const MatNX& A, const MatNXNU& B,
     const MatNX& Q, const MatNU& R,
     const MatNX& P0,
     const DARESolverOpts& opts,
+    MatNUNX& K_out,
+    Eigen::LDLT<MatNU>& S_ldlt,
     DARESolverInfo& info)
 {
     info = DARESolverInfo{};
 
     // --- max_iters == 0: pass-through -----------------------
     if (opts.max_iters == 0) {
+        K_out = compute_gain(B, R, P0, A, S_ldlt);
         info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();
         return P0;
     }
@@ -234,7 +267,7 @@ inline MatNX iterative_dare(
     //  drop it from the build entirely.
 #ifndef SDDRE_NO_EARLY_EXIT
     if (opts.early_break && opts.min_iters == 0) {
-        const MatNUNX K   = compute_gain(B, R, P0, A);
+        const MatNUNX K   = compute_gain(B, R, P0, A, S_ldlt);
         const Scalar  res = compute_dare_residual(A, B, Q, R, P0, K);
         if (res < opts.tolerance) {
             const MatNX A_cl = A - B * K;
@@ -246,6 +279,7 @@ inline MatNX iterative_dare(
                     break;
                 }
             if (stable) {
+                K_out                  = K;
                 info.tol_achieved      = res;
                 info.solve_success     = true;
                 info.solver_iterations = 0;
@@ -276,8 +310,9 @@ inline MatNX iterative_dare(
             if (opts.early_break && (i >= min_it) &&
                 ((i - min_it) % opts.riccati_check_every == 0))
             {
-                // 5-arg: K recomputed from the UPDATED P (matches MATLAB)
-                const Scalar res = compute_dare_residual(A, B, Q, R, P);
+                // Gain from the UPDATED P (matches MATLAB), kept for return.
+                K_out = compute_gain(B, R, P, A, S_ldlt);
+                const Scalar res = compute_dare_residual(A, B, Q, R, P, K_out);
                 if (res < opts.tolerance) {
                     info.solver_iterations = i;
                     info.tol_achieved      = res;
@@ -287,6 +322,8 @@ inline MatNX iterative_dare(
             }
             info.solver_iterations = i;
         }
+        // Loop exhausted — refresh the gain for the final P.
+        K_out = compute_gain(B, R, P, A, S_ldlt);
         break;
     }
 
@@ -301,10 +338,12 @@ inline MatNX iterative_dare(
     //  call passes M = A_K'
     // ========================================================
     case DARESolverMethod::NK: {
+        MatNU   S;                                       // R + B'PB, explicit
+        MatNUNX K = compute_gain(B, R, P, A, S_ldlt, S); // gain of incoming P0
+
         for (int i = 1; i <= opts.max_iters; ++i) {
-            const MatNUNX K  = compute_gain(B, R, P, A);
-            const MatNX   AK = A - B * K;
-            MatNX         Qk = Q + K.transpose() * R * K;
+            const MatNX AK = A - B * K;
+            MatNX       Qk = Q + K.transpose() * R * K;
             symmetrise(Qk);
 
             DlyapInfo dinfo;
@@ -314,33 +353,50 @@ inline MatNX iterative_dare(
             if (i == 1 && !dinfo.is_stable) {
                 // Non-converged initial gain, K0 was not in stability basin: NK will diverge.
                 // Signal the caller to fall back to a cold SDA solve.
+                // K_out still made consistent with the returned P (contract),
+                // though the SDA fallback discards both.
                 info.unstable_k0       = true;
                 info.solver_iterations = i;
-                info.tol_achieved      = compute_dare_residual(A, B, Q, R, P);
+                K_out                  = compute_gain(B, R, P, A, S_ldlt, S);
+                info.tol_achieved      = compute_dare_residual(A, B, Q, R, P, K_out);
                 info.solve_success     = false;
                 return P;
             }
 
+            // Gain of the NEW P — needed next iteration or as the returned
+            // gain either way, and it makes the increment test nearly free.
+            const MatNUNX K_new = compute_gain(B, R, P, A, S_ldlt, S);
+
             if (opts.early_break && (i >= opts.min_iters)) {
-                const Scalar res = compute_dare_residual(A, B, Q, R, P);
+                // C1: Newton-increment identity (see header comment).
+                const MatNUNX dK  = K_new - K;
+                const Scalar  res = (dK.transpose() * (S * dK)).norm()
+                                  / std::max(P.norm(), Scalar(1));
                 if (res < opts.tolerance) {
                     info.solver_iterations = i;
                     info.tol_achieved      = res;
+                    info.tol_is_estimate   = true;
                     info.solve_success     = true;
+                    K_out                  = K_new;
                     return P;
                 }
             }
+            K = K_new;
             info.solver_iterations = i;
         }
+        K_out = K;   // == gain of the final P; S_ldlt already matches
         break;
     }
 
     default:
+        K_out = compute_gain(B, R, P, A, S_ldlt);
         break;
     }
 
-    if (opts.early_break == 1) {
-        info.tol_achieved  = compute_dare_residual(A, B, Q, R, P);
+    // Loop exhausted without early-break return. K_out matches P here on
+    // every path, so the true residual costs no extra gain computation.
+    if (opts.early_break) {
+        info.tol_achieved  = compute_dare_residual(A, B, Q, R, P, K_out);
         info.solve_success = (info.tol_achieved < opts.tolerance);
     } else {
         info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();

@@ -118,12 +118,22 @@ struct DARESolverInfo {
     bool   solve_success     = false;
     bool   unstable_k0       = false;  // NK: initial gain destabilising
     bool   used_sda_fallback = false;
+    bool   tol_is_estimate   = false;  // true when tol_achieved came from the
+                                       // NK Newton-increment identity rather
+                                       // than the full DARE residual
 };
 
 struct SDDREOpts {
     Scalar preview_horizon             = 2.0;  // s (inf -> constant-ref approx)
     bool   use_full_fh_mpc_at_terminal = false;
     bool   always_use_full_fh_mpc      = false;
+
+    // C3: after the DARE solve, evaluate the TRUE relative residual once in
+    // compute_u (reusing the solver's gain) and overwrite tol_achieved /
+    // solve_success with it. Restores the health signal that the NK
+    // Newton-increment test no longer provides in-solver.
+    bool   post_residual_check         = false;
+
     DARESolverOpts dare;
 };
 

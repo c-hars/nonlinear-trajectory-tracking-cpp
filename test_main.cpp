@@ -154,6 +154,7 @@ static void setup_controller() {
     ctrl.opts.preview_horizon             = 2.0;
     ctrl.opts.use_full_fh_mpc_at_terminal = false;
     ctrl.opts.always_use_full_fh_mpc      = false;
+    ctrl.opts.post_residual_check         = false;  // C3: true residual as health signal (costs ~one residual eval per step)
 
     ctrl.opts.dare.method    = DARESolverMethod::NK;
     ctrl.opts.dare.min_iters = 1;
