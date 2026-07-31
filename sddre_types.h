@@ -20,7 +20,7 @@ constexpr int NY = 6;    // outputs (rows of C)
 
 // ---- Scalar type --------------------------------------------
 #ifndef SDDRE_USE_FLOAT
-  #define SDDRE_USE_FLOAT 0
+  #define SDDRE_USE_FLOAT 1
 #endif
 
 #if SDDRE_USE_FLOAT

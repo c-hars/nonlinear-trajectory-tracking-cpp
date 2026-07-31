@@ -114,7 +114,9 @@ inline Scalar compute_dare_residual(
 // ============================================================
 
 static_assert(NX == 12, "mm12 kernels are hard-coded for 12x12");
-static_assert(std::is_same<Scalar, double>::value, "mm12 kernels assume double");
+static_assert(std::is_same<Scalar, float>::value ||
+              std::is_same<Scalar, double>::value,
+              "mm_kernels has tile shapes for float and double only");
 static_assert(!(MatNX::Flags & Eigen::RowMajorBit), "mm12 kernels assume column-major");
 
 inline MatNX dlyap_fast_c(

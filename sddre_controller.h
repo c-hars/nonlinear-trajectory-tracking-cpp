@@ -268,8 +268,8 @@ public:
 
                 VecNX v_a = (MatNX::Identity() - F).partialPivLu().solve(wex_col(k + M));
                 VecNX v_b;
-                double* v_cur = v_a.data();
-                double* v_nxt = v_b.data();
+                Scalar* v_cur = v_a.data();
+                Scalar* v_nxt = v_b.data();
 
                 for (int j = M - 1; j >= 1; --j) {
                     mv12_fma(v_nxt, F.data(), v_cur, wex_ptr(k + j));

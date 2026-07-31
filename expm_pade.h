@@ -37,6 +37,7 @@
 #include <Eigen/Dense>
 #include <cmath>
 #include <type_traits>
+#include "mm_kernels.h"
 
 // ------------------------------------------------------------
 //  Degree-selection thresholds, per precision.
@@ -252,9 +253,10 @@ inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
 
 // Kernel-backed product for the concrete Teensy case.
 // (P1,Q1,c1)*(P2,Q2,c2) = (P1 P2,  P1 Q2 + c2 Q1,  c1 c2)
-inline BlockUT<double,12,6> operator*(const BlockUT<double,12,6>& a,
-                                      const BlockUT<double,12,6>& b) {
-    BlockUT<double,12,6> r;
+template <typename S>
+inline BlockUT<S,12,6> operator*(const BlockUT<S,12,6>& a,
+                                 const BlockUT<S,12,6>& b) {
+    BlockUT<S,12,6> r;
     mm12  (r.P.data(), a.P.data(), b.P.data());
     mm12x6(r.Q.data(), a.P.data(), b.Q.data());
     r.Q.noalias() += b.c * a.Q;
