@@ -6,6 +6,11 @@
 //    dlyap_fast_c.m   — Smith doubling DLYAP solver
 //    dare_sda.m       — structure-preserving doubling (DARE)
 //    iterative_dare.m — Newton-Kleinman + Riccati iteration
+//
+//  C6: every function taking an input weight is templated on
+//  RW = RWeight<Mode> rather than taking MatNU. All arithmetic
+//  involving R goes through the RWeight operations, so the
+//  scalar and dense modes share one body.
 // ============================================================
 
 #include "sddre_types.h"
@@ -20,19 +25,21 @@
 // 6-arg form additionally returns S itself, which the NK
 // Newton-increment test needs explicitly (LDLT alone doesn't
 // hand S back cheaply).
+template <typename RW>
 inline MatNUNX compute_gain(
-    const MatNXNU& B, const MatNU& R,
+    const MatNXNU& B, const RW& R,
     const MatNX& P, const MatNX& A,
     Eigen::LDLT<MatNU>& S_ldlt, MatNU& S_out)
 {
     const MatNUNX BtP = B.transpose() * P;   // 6x12
-    S_out = R + BtP * B;                     // 6x6 SPD
+    R.set_R_plus(S_out, BtP * B);            // 6x6 SPD
     S_ldlt.compute(S_out);
     return S_ldlt.solve(BtP * A);
 }
 
+template <typename RW>
 inline MatNUNX compute_gain(
-    const MatNXNU& B, const MatNU& R,
+    const MatNXNU& B, const RW& R,
     const MatNX& P, const MatNX& A,
     Eigen::LDLT<MatNU>& S_ldlt)
 {
@@ -40,8 +47,9 @@ inline MatNUNX compute_gain(
     return compute_gain(B, R, P, A, S_ldlt, S);
 }
 
+template <typename RW>
 inline MatNUNX compute_gain(
-    const MatNXNU& B, const MatNU& R,
+    const MatNXNU& B, const RW& R,
     const MatNX& P, const MatNX& A)
 {
     Eigen::LDLT<MatNU> S_ldlt;
@@ -61,21 +69,26 @@ inline MatNUNX compute_gain(
 //  version does not yet have this: the mismatch may
 //  shift iteration counts - keep in mind re SIL validation.
 // ============================================================
+template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
-    const MatNX& Q, const MatNU& R,
+    const MatNX& Q, const RW& R,
     const MatNX& P, const MatNUNX& K)
 {
-    const MatNX A_cl  = A - B * K;
-    const MatNX P_rhs = A_cl.transpose() * P * A_cl
-                      + K.transpose() * R * K + Q;
+    const MatNX A_cl = A - B * K;
+
+    MatNX P_rhs = Q;
+    R.add_KtRK(P_rhs, K);
+    P_rhs.noalias() += A_cl.transpose() * P * A_cl;
+
     return (P_rhs - P).norm() / std::max(P.norm(), Scalar(1));
 }
 
 // 5-arg overload: recomputes K from the supplied P.
+template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
-    const MatNX& Q, const MatNU& R,
+    const MatNX& Q, const RW& R,
     const MatNX& P)
 {
     return compute_dare_residual(A, B, Q, R, P, compute_gain(B, R, P, A));
@@ -163,18 +176,23 @@ inline MatNX dlyap_fast_c(
 //  Requires A nonsingular — free for A = expm(Ac*Ts).
 //
 //  Cold by construction: no P0, no warm start.
+//
+//  C6: R enters exactly once, in the initial G = B R^-1 B'.
+//  Scalar mode turns that from an LDLT plus a 6-RHS solve into
+//  a scaled outer product. Real, but this path is cold — it
+//  runs at k == 1 and on the NK fallback only.
 // ============================================================
+template <typename RW>
 inline MatNX dare_sda(
     const MatNX& A, const MatNXNU& B,
-    const MatNX& Q, const MatNU& R,
+    const MatNX& Q, const RW& R,
     Scalar tolerance,
     int    min_doublings,
     int    max_doublings,
     DARESolverInfo& info)
 {
     MatNX Ak = A;
-    MatNUNX R_inv_Bt = R.ldlt().solve(B.transpose());
-    MatNX G = B * R_inv_Bt; // B R^{-1} B'
+    MatNX G  = R.B_Rinv_Bt(B);   // B R^{-1} B'
     symmetrise(G);
     MatNX H  = Q;
 
@@ -193,7 +211,6 @@ inline MatNX dare_sda(
 
         // H and G both consume the OLD A_k — update A_k last.
         // .eval() forces a temporary: H and G appear on both sides.
-        // H += (Ak.transpose() * H * Yk).eval();   symmetrise(H); // old
         MatNX AkTH = Ak.transpose() * H;
         H += AkTH * Yk;                          symmetrise(H);
         G += (Ak * Zk * Ak.transpose()).eval();  symmetrise(G);
@@ -239,10 +256,15 @@ inline MatNX dare_sda(
 //  C2 — returns the gain of the final P in K_out and its
 //  S = R + B'PB factorisation in S_ldlt, so the caller doesn't
 //  recompute either.
+//
+//  C6 — the increment test still needs S explicitly, and S is
+//  a full 6x6 in both modes (B'PB is dense), so that line is
+//  unchanged. The savings here are in Qk and in compute_gain.
 // ============================================================
+template <typename RW>
 inline MatNX iterative_dare(
     const MatNX& A, const MatNXNU& B,
-    const MatNX& Q, const MatNU& R,
+    const MatNX& Q, const RW& R,
     const MatNX& P0,
     const DARESolverOpts& opts,
     MatNUNX& K_out,
@@ -340,8 +362,14 @@ inline MatNX iterative_dare(
 
         for (int i = 1; i <= opts.max_iters; ++i) {
             const MatNX AK = A - B * K;
-            MatNX       Qk = Q + K.transpose() * R * K;
+
+            // Qk = Q + K'RK. Q is exactly symmetric (symmetrised at
+            // build); K'RK is symmetric in exact arithmetic but not
+            // bit-exact from a general gemm, so symmetrise stays.
+            MatNX Qk = Q;
+            R.add_KtRK(Qk, K);
             symmetrise(Qk);
+            
 
             DlyapInfo dinfo;
             P = dlyap_fast_c(AK.transpose(), Qk, dinfo,

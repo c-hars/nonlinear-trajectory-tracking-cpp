@@ -8,6 +8,11 @@
 //  Default: heap-allocated std::vector, built once per
 //  trajectory. Later: will be swapped for a static array
 //  (sized to the constant-length preview window).
+//
+//  C6: the class is templated on RMode. SDDREController is the
+//  default instantiation; SDDREControllerT<RMode::Dense> is the
+//  pre-C6 arithmetic, kept live so the two can be measured in
+//  the same binary rather than across builds.
 // ============================================================
 
 #include "sddre_types.h"
@@ -15,36 +20,109 @@
 #include "sddre_model.h"
 #include <vector>
 #include <algorithm>
+#include <stdint.h>
 
-// ---- Platform timing ----------------------------------------
+// ============================================================
+//  Platform timing — cycle counter, not micros().
+//
+//  The C6 saving is on the order of a few hundred flops per
+//  Newton-Kleinman iteration against a Smith doubling costing
+//  ~5200, run 5-15 times – well under 1% of the DARE, likely
+//  close to the 1 us quantisation of micros(). Measuring it
+//  well requires a finer clock. And this change is long 
+//  overdue, we're at the stage of fine optimisations.
+//
+//    Teensy 4.1 — DWT cycle counter, 1 tick = 1 CPU cycle
+//                 (1.67 ns at 600 MHz). Wraps every ~7.2 s;
+//                 unsigned subtraction handles that correctly
+//                 for any interval shorter than the period.
+//    Desktop    — steady_clock in nanoseconds. Actual
+//                 granularity is platform-dependent (~100 ns
+//                 via QueryPerformanceCounter on Windows),
+//                 still ~10x better than micros().
+//
+//  Reported times stay in microseconds, now fractional.
+// ============================================================
+
 #ifdef ARDUINO
-  #include <stdint.h>
-  extern "C" uint32_t micros(void);   // declared in the Teensy core; avoids pulling Arduino.h in before Eigen
-  inline uint32_t _sddre_micros() { return micros(); }
+  // Free-running cycle counter via the Cortex-M7 Data Watchpoint and Trace (DWT) unit. Registers are written out by address rather than pulling in Arduino.h, which this header deliberately keeps out of the way of Eigen.
+  // All four live in the ARMv7-M private peripheral bus at 0xE0000000
+  // DWT block base is 0xE0001000, the System Control Space (SCS) is 0xE000E000.
+  #define SDDRE_DWT_CYCCNT (*(volatile uint32_t*)0xE0001004) // +0x004 cycle count, free-running, wraps at 2^32 (~7.16 s at 600 MHz)
+  #define SDDRE_DWT_CTRL   (*(volatile uint32_t*)0xE0001000) // +0x000 DWT control; bit 0 = CYCCNTENA (Cycle Counter Enable)
+  #define SDDRE_DWT_LAR    (*(volatile uint32_t*)0xE0001FB0) // +0xFB0 CoreSight Lock Access Register
+  #define SDDRE_DEMCR      (*(volatile uint32_t*)0xE000EDFC) // SCS +0xDFC Debug Exception and Monitor Control
+
+  // Stock Teensy 4.1 core clock. Overridden by the build's F_CPU when present, so an overclocked build scales correctly.
+  #ifndef SDDRE_CPU_HZ
+    #ifdef F_CPU
+      #define SDDRE_CPU_HZ (F_CPU)
+    #else
+      #define SDDRE_CPU_HZ 600000000u
+    #endif
+  #endif
+
+  using sddre_tick_t = uint32_t;   // one tick = one CPU cycle
+
+  inline void sddre_timing_init() {
+      SDDRE_DEMCR    |= (1u << 24);        // TRCENA, Trace Enable (gates power and clock; without it the DWT registers read back as zero)
+      SDDRE_DWT_LAR   = 0xC5ACCE55u;       // CoreSight unlock key (Cortex-M7)
+      SDDRE_DWT_CYCCNT = 0;                // start from a known point
+      SDDRE_DWT_CTRL |= 1u;                // cycle counter enable (CYCCNT advances one per CPU cycle while set, frozen while clear)
+  }
+
+  inline sddre_tick_t sddre_ticks() { return SDDRE_DWT_CYCCNT; }
+
+  inline Scalar sddre_ticks_to_us(sddre_tick_t d) {
+      return static_cast<Scalar>(d) *
+             (Scalar(1e6) / Scalar(SDDRE_CPU_HZ));
+  }
+
+  inline Scalar sddre_tick_us() { return sddre_ticks_to_us(1); }
+
 #else
   #include <chrono>
-  #include <cstdint>
-  inline uint32_t _sddre_micros() {
+
+  using sddre_tick_t = uint64_t;
+
+  inline void sddre_timing_init() {}
+
+  inline sddre_tick_t sddre_ticks() {
       using namespace std::chrono;
-      static const auto t0 = high_resolution_clock::now();
-      return static_cast<uint32_t>(
-          duration_cast<microseconds>(high_resolution_clock::now() - t0).count());
+      static const auto t0 = steady_clock::now();
+      return static_cast<uint64_t>(
+          duration_cast<nanoseconds>(steady_clock::now() - t0).count());
+  }
+
+  inline Scalar sddre_ticks_to_us(sddre_tick_t d) {
+      return static_cast<Scalar>(d) * Scalar(1e-3);
+  }
+
+  inline Scalar sddre_tick_us() {
+      // Nominal period of steady_clock, in microseconds. The real
+      // granularity is usually coarser than this.
+      using P = std::chrono::steady_clock::period;
+      return Scalar(1e6) * Scalar(P::num) / Scalar(P::den);
   }
 #endif
 
-inline Scalar _sddre_elapsed_us(uint32_t start) {
-    return static_cast<Scalar>(_sddre_micros() - start);
+inline Scalar _sddre_elapsed_us(sddre_tick_t start) {
+    return sddre_ticks_to_us(sddre_ticks() - start);
 }
 
 // ============================================================
-//  SDDREController
+//  SDDREControllerT
 // ============================================================
-class SDDREController {
+template <RMode RM = SDDRE_R_MODE_DEFAULT>
+class SDDREControllerT {
 public:
+    static constexpr RMode r_mode = RM;
+    using RType = RWeight<RM>;
+
     // ---- Weight matrices (set once before first call) -------
     MatNYNX C   = MatNYNX::Zero();   // 6x12 output selection
     MatNY   Qy  = MatNY::Identity();
-    MatNU   R   = MatNU::Identity();
+    RType   R;                       // r*I — see RWeight
     MatNY   Qyf = MatNY::Identity();
 
     // ---- Reference trajectory --------------------------------
@@ -82,7 +160,7 @@ public:
         // ------------------------------------------------
         //  1. SDC matrices + ZOH discretisation
         // ------------------------------------------------
-        uint32_t t0 = _sddre_micros();
+        sddre_tick_t t0 = sddre_ticks();
 
         const MatNX Ac = get_A_sdc_quaternion(xk, qp);
 
@@ -100,7 +178,7 @@ public:
         // ------------------------------------------------
         //  2. Solve DARE
         // ------------------------------------------------
-        t0 = _sddre_micros();
+        t0 = sddre_ticks();
 
         Eigen::LDLT<MatNU> S_ldlt;   // S = R + B'P_ss B, reused in step 3
 
@@ -154,7 +232,7 @@ public:
         // ------------------------------------------------
         //  3. Feedforward
         // ------------------------------------------------
-        t0 = _sddre_micros();
+        t0 = sddre_ticks();
 
         const MatNX   A_cl = A - B * K_ss_;
 
@@ -203,8 +281,13 @@ public:
                     const MatNUNX K_j    = compute_gain(B, R, P_term, A);
                     const MatNX   A_cl_j = A - B * K_j;
 
-                    P_term = (Q_ + K_j.transpose() * R * K_j
-                            + A_cl_j.transpose() * P_term * A_cl_j).eval();
+                    // P_j    = Q + K_j'R K_j + A_cl_j' P_{j+1} A_cl_j
+                    //   Old code: P_term = (Q_ + K_j.transpose() * R * K_j + A_cl_j.transpose() * P_term * A_cl_j).eval();
+                    //   Now: uses adaptive path, according to R matrice's RType.
+                    MatNX P_next = Q_;                                        // P_next == Q
+                    R.add_KtRK(P_next, K_j);                                  // P_next += K_j'R K_j (P_next is what receives the KtRK sum; R.add_KtRK dispatches on RType (scalar or dense))
+                    P_next.noalias() += A_cl_j.transpose() * P_term * A_cl_j; // P_next += A_cl_j' P_{j+1} A_cl_j
+                    P_term = P_next;                                          // P_term == P_j (ready as P_{j+1} for the next pass down)
                     symmetrise(P_term);
 
                     const Eigen::Map<const VecNY> r_j(
@@ -266,3 +349,6 @@ private:
             wex_buf_.data() + static_cast<size_t>(matlab_col - 1) * NX);
     }
 };
+
+// Default instantiation — scalar R unless overridden at build time.
+using SDDREController = SDDREControllerT<>;

@@ -10,6 +10,8 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <type_traits>
+#include <cassert>
 
 // ---- Compile-time dimensions --------------------------------
 constexpr int NX = 12;   // states
@@ -90,6 +92,125 @@ inline void symmetrise(MatT& X) {
             X(j, i) = v;
         }
 }
+
+// ============================================================
+//  C6 — input-weight structure exploitation
+//
+//  The controller's R is (here and typically) a scalar multiple of identity, r*I. Change 6 (C6) allows that structure to be exploited.
+//  The code should support both the dense and sparse extremes – full PSD R, to scalar multiple identity r*I. In between cases (e.g. diagonal or block structures) are neglected to keep the code simple + readily toggleable between; we only need to test the two extreme cases, the others lie within. Plus: r*I offers the most speedup, and is probably the most common choice (especially in aerospace where plants likely have symmetric actuator arrangements).
+// 
+// The weight matrix R is wrapped in a type parameterised on how much structure it is allowed to assume:
+//
+//    RMode::Scalar — stores r alone. K'RK becomes r*(K'K),
+//                    R + B'PB becomes a diagonal add, and
+//                    B R^-1 B' becomes a scaled outer product
+//                    with no factorisation at all.
+//    RMode::Dense  — stores the full 6x6 and does exactly the
+//                    R arithmetic the pre-C6 code did.
+//
+//  One textual body per operation, selected by if constexpr.
+//
+//  NOT necessarily bit-identical across modes, especially in single-precision: r*(K'K) scales before the summation, while K'*(R*K) scales after, so the two can differ at the last bit or so – the precision difference is not a concern, but could manifest behaviourally which is a concern: near the DARE early-break threshold that could move a Newton-Kleinman iteration count by one: expected, and the reason total iteration counts are now reported/monitored in test_main.cpp.
+// ============================================================
+enum class RMode { Scalar, Dense };
+
+#ifndef SDDRE_R_MODE_DEFAULT
+  #define SDDRE_R_MODE_DEFAULT RMode::Scalar
+#endif
+
+inline const char* r_mode_name(RMode m) {
+    return (m == RMode::Scalar) ? "scalar" : "dense";
+}
+
+template <RMode Mode>
+struct RWeight {
+    static constexpr RMode mode      = Mode;
+    static constexpr bool  is_scalar = (Mode == RMode::Scalar);
+
+    using Storage = std::conditional_t<is_scalar, Scalar, MatNU>;
+    Storage R_;
+
+    RWeight() { set(Scalar(1)); }
+
+    // ---- Setters ----------------------------------------
+    //  set(r) is the honest one — it says what the weight is.
+    void set(Scalar r) {
+        if constexpr (is_scalar) {
+            R_ = r;
+        } else {
+            R_.setZero();
+            R_.diagonal().setConstant(r);
+        }
+    }
+
+    // set(Rm) accepts a full matrix so existing call sites and MATLAB-side exports keep working.
+    // In scalar mode it keeps only r and asserts the input really was r*I.
+    // Asserts compile out under NDEBUG. Set in the PlatformIO build; make sure the desktop g++ line keeps -DNDEBUG too, or this check runs on every call.
+    void set(const MatNU& Rm) {
+        if constexpr (is_scalar) {
+            const Scalar r = Rm(0, 0);
+            assert(r > Scalar(0) &&
+                   "RMode::Scalar requires R = r*I with r > 0");
+            assert((Rm - r * MatNU::Identity()).cwiseAbs().maxCoeff()
+                       <= Scalar(8) * SCALAR_EPS * std::abs(r) &&
+                   "RMode::Scalar requires R = r*I");
+            R_ = r;
+        } else {
+            R_ = Rm;
+        }
+    }
+
+    // ---- Accessors ---------------------------------------
+    Scalar scalar() const {
+        if constexpr (is_scalar) return R_;
+        else                     return R_(0, 0);
+    }
+
+    MatNU dense() const {
+        if constexpr (is_scalar) return R_ * MatNU::Identity();
+        else                     return R_;
+    }
+
+    // ---- Hot-path operations ------------------------------
+
+    // S <- R + M
+    // Scalar mode touches 6 diagonal entries instead of 36.
+    template <typename Derived>
+    void set_R_plus(MatNU& S, const Eigen::MatrixBase<Derived>& M) const {
+        if constexpr (is_scalar) {
+            S = M;
+            S.diagonal().array() += R_;
+        } else {
+            S = R_ + M;
+        }
+    }
+
+    //  X <- X + K'RK.
+    //  Scalar: one 12x6 * 6x12 gemm with alpha = r (864 madds).
+    //  Dense:  a 12x6 temporary then the same gemm (1296 madds).
+    //
+    //  Since K'RK is symmetric, one possible speedup stands out: selfadjointView<Lower>().rankUpdate(K.transpose(), r) would compute only the lower triangle: 468 madds, about 45% off.
+    //  Tried and rejected: measurably SLOWER on Cortex-M7. The saved arithmetic does not survive the consequences: the full matrix is needed, so the lower triangle has to be mirrored into the upper before use, and on this unit the load/store cost trumps the saving in arithmetic. Same result as the triangular-view shortcut in the DARE residual, for the same reason. Both are recorded as measured negatives.
+    void add_KtRK(MatNX& X, const MatNUNX& K) const {
+        if constexpr (is_scalar) X.noalias() += R_ * (K.transpose() * K);
+        else                     X.noalias() += K.transpose() * R_ * K;
+    }
+
+    //  G = B R^{-1} B'  (the SDA ctrb-gramian block).
+    //
+    //  Scalar mode deletes the 6x6 LDLT factorisation, and its 12-right-hand-side solve.
+    //  But, cold path only: this runs at k == 1 and on the Newton-Kleinman fallback, so it never shows up as an improvement in median compute.
+    MatNX B_Rinv_Bt(const MatNXNU& B) const {
+        MatNX G;
+        if constexpr (is_scalar) {
+            G.noalias() = (Scalar(1) / R_) * (B * B.transpose());
+        } else {
+            const MatNUNX Rinv_Bt = R_.ldlt().solve(B.transpose());
+            G.noalias() = B * Rinv_Bt;
+        }
+        return G;
+    }
+};
 
 // ---- Enums / option structs ---------------------------------
 
