@@ -258,11 +258,24 @@ public:
 
                 const MatNX F = A_cl.transpose();
 
-                VecNX v = (MatNX::Identity() - F).partialPivLu()
-                              .solve(wex_col(k + M));
+                // VecNX v = (MatNX::Identity() - F).partialPivLu()
+                //               .solve(wex_col(k + M));
 
-                for (int j = M - 1; j >= 1; --j)
-                    v = F * v + wex_col(k + j);
+                // for (int j = M - 1; j >= 1; --j)
+                //     v = F * v + wex_col(k + j);
+
+                // u = -K_ss_ * xk + S_ldlt.solve(B.transpose() * v);
+
+                VecNX v_a = (MatNX::Identity() - F).partialPivLu().solve(wex_col(k + M));
+                VecNX v_b;
+                double* v_cur = v_a.data();
+                double* v_nxt = v_b.data();
+
+                for (int j = M - 1; j >= 1; --j) {
+                    mv12_fma(v_nxt, F.data(), v_cur, wex_ptr(k + j));
+                    std::swap(v_cur, v_nxt);
+                }
+                const Eigen::Map<const VecNX> v(v_cur);
 
                 u = -K_ss_ * xk + S_ldlt.solve(B.transpose() * v);
 
@@ -347,6 +360,10 @@ private:
     VecNX wex_col(int matlab_col) const {
         return Eigen::Map<const VecNX>(
             wex_buf_.data() + static_cast<size_t>(matlab_col - 1) * NX);
+    }
+
+    const Scalar* wex_ptr(int matlab_col) const {
+        return wex_buf_.data() + static_cast<size_t>(matlab_col - 1) * NX;
     }
 };
 

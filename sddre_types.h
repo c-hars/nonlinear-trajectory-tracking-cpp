@@ -39,11 +39,13 @@ template <typename S> struct sddre_tol;
 
 template <> struct sddre_tol<double> {
     static constexpr double dlyap = 1e-14;   // ~45 * eps(double)
+    static constexpr int dlyap_max_doublings = 60; // covers rho up to 1 - 2^52 (double precision)
     static constexpr double dare  = 1e-4;
 };
 
 template <> struct sddre_tol<float> {
     static constexpr float dlyap = 5e-6f; // ~42 * eps(float)
+    static constexpr int dlyap_max_doublings = 30;  // TODO: verify coverage up to 1 - 2^23 (single precision)
     static constexpr float dare  = 1e-4f;
 };
 
@@ -226,7 +228,7 @@ struct DARESolverOpts {
 
     // --- dlyap_fast_c (Smith doubling) parameters ---
     Scalar dlyap_tolerance     = Tol::dlyap;
-    int    dlyap_max_doublings = 60;     // covers rho up to 1 - 2^52 (double precision). TODO LATER: single/double-dependent max_doublings
+    int    dlyap_max_doublings = Tol::dlyap_max_doublings;
 
     // --- dare_sda parameters ---
     int    sda_min_doublings   = 1;
