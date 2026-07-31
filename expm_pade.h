@@ -250,6 +250,18 @@ inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
     return { a.P * b.P, a.P * b.Q + b.c * a.Q, a.c * b.c };
 }
 
+// Kernel-backed product for the concrete Teensy case.
+// (P1,Q1,c1)*(P2,Q2,c2) = (P1 P2,  P1 Q2 + c2 Q1,  c1 c2)
+inline BlockUT<double,12,6> operator*(const BlockUT<double,12,6>& a,
+                                      const BlockUT<double,12,6>& b) {
+    BlockUT<double,12,6> r;
+    mm12  (r.P.data(), a.P.data(), b.P.data());
+    mm12x6(r.Q.data(), a.P.data(), b.Q.data());
+    r.Q.noalias() += b.c * a.Q;
+    r.c = a.c * b.c;
+    return r;
+}
+
 template <typename S, int N, int M>
 inline BlockUT<S,N,M> operator+(const BlockUT<S,N,M>& a,
                                 const BlockUT<S,N,M>& b) {

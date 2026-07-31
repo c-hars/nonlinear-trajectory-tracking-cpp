@@ -14,6 +14,7 @@
 // ============================================================
 
 #include "sddre_types.h"
+#include "mm_kernels.h"
 
 // ============================================================
 //  compute_gain
@@ -111,6 +112,11 @@ inline Scalar compute_dare_residual(
 //  doublings leaves it false, which is what feeds the NK
 //  unstable-K0 fallback. Deliberate, and matches MATLAB.
 // ============================================================
+
+static_assert(NX == 12, "mm12 kernels are hard-coded for 12x12");
+static_assert(std::is_same<Scalar, double>::value, "mm12 kernels assume double");
+static_assert(!(MatNX::Flags & Eigen::RowMajorBit), "mm12 kernels assume column-major");
+
 inline MatNX dlyap_fast_c(
     const MatNX& A, const MatNX& Q,
     DlyapInfo& info,
@@ -125,14 +131,19 @@ inline MatNX dlyap_fast_c(
     Scalar ninc      = std::numeric_limits<Scalar>::infinity();
     Scalar ninc_prev = std::numeric_limits<Scalar>::quiet_NaN();
 
+    MatNX T, inc, Psq;                        // (‡) hoisted scratch
     int j = 1;
     for (j = 1; j <= max_doublings; ++j) {
         // X is symmetric, so inc = P X P' is too. Form T = P X in
         // full, then only the lower triangle of T P', and mirror —
         // saves roughly half of the second product per doubling.
-        const MatNX T = P * X;
-        MatNX inc;
-        inc.noalias() = T * P.transpose();
+        // const MatNX T = P * X; // (†)
+        // MatNX inc; // (†)
+        // inc.noalias() = T * P.transpose(); // (†)
+        mm12(T.data(), P.data(), X.data());        // (‡) T   = P X
+        // mm12_abt(inc.data(), T.data(), P.data());  // (‡) inc = T P'
+        mm12_abt_sym(inc.data(), T.data(), P.data());  // (‡, v2) inc = T P', symmetric
+        
         X += inc;
 
         ninc            = inc.norm();
@@ -152,7 +163,9 @@ inline MatNX dlyap_fast_c(
         }
 
         ninc_prev = ninc;
-        P = (P * P).eval();
+        // P = (P * P).eval(); // (†)
+        mm12(Psq.data(), P.data(), P.data());      // (‡) no-alias temp
+        P = Psq;                                   // (‡) replaces P = (P*P).eval()
     }
 
     info.doublings     = j;
