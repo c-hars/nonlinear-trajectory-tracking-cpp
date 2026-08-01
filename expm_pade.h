@@ -287,6 +287,57 @@ inline void diag_add(BlockUT<S,N,M>& X, S s) {
     X.c += s;
 }
 
+// ============================================================
+//  No-pivot LU factorisation and solve for small dense matrices.
+//
+//  Safe when the matrix is diagonally dominant. For the Van Loan
+//  solve, W.P = V.P - U.P has diagonal dominance factor >= 8
+//  at every Pade degree this code reaches.
+//
+//  Column-major throughout, matching Eigen's default storage.
+// ============================================================
+
+template <typename S, int N>
+inline void lu_nopivot_factor(S* __restrict M) {
+    for (int k = 0; k < N - 1; ++k) {
+        S* col_k = M + k * N;
+        const S inv = S(1) / col_k[k];
+        for (int i = k + 1; i < N; ++i)
+            col_k[i] *= inv;
+        for (int j = k + 1; j < N; ++j) {
+            S* col_j = M + j * N;
+            const S u_kj = col_j[k];
+            for (int i = k + 1; i < N; ++i)
+                col_j[i] -= col_k[i] * u_kj;
+        }
+    }
+}
+
+template <typename S, int N>
+inline void lu_nopivot_solve_col(const S* __restrict LU, S* __restrict b) {
+    // Forward substitution (unit-diagonal L, column-oriented)
+    for (int k = 0; k < N - 1; ++k) {
+        const S bk = b[k];
+        const S* col_k = LU + k * N;
+        for (int i = k + 1; i < N; ++i)
+            b[i] -= col_k[i] * bk;
+    }
+    // Back substitution (column-oriented)
+    for (int j = N - 1; j >= 0; --j) {
+        const S* col_j = LU + j * N;
+        b[j] /= col_j[j];
+        const S bj = b[j];
+        for (int i = 0; i < j; ++i)
+            b[i] -= col_j[i] * bj;
+    }
+}
+
+template <typename S, int N, int NCOLS>
+inline void lu_nopivot_solve(const S* __restrict LU, S* __restrict B) {
+    for (int c = 0; c < NCOLS; ++c)
+        lu_nopivot_solve_col<S, N>(LU, B + c * N);
+}
+
 }  // namespace expm_detail
 
 
@@ -351,26 +402,31 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
     }
 
     // r_m(F) = (V - U)^{-1}(V + U).
-    //   U.c == 0 always — every term carries F to an odd power >= 1 —
-    //   so W.c == Y.c == the Pade constant term, which is never zero.
-    //   Solving W X = Y then forces X.c = 1 and leaves
-    //     X.P = W.P^{-1} Y.P
-    //     X.Q = W.P^{-1} (Y.Q - W.Q)
-    //   One N x N factorisation, N + M right-hand sides, instead of
-    //   an (N+M) x (N+M) one.
-    const Blk  W  = V - U;
-    const Blk  Y  = V + U;
-    const auto lu = W.P.partialPivLu();
+    //
+    //   W.P = V.P - U.P  — factored in place, no pivoting
+    //         (diagonal dominance factor >= 8 at all reachable norms)
+    //   Ad  = W.P^{-1} (V.P + U.P)
+    //   Bd  = W.P^{-1} (2 U.Q)         [Y.Q - W.Q = 2 U.Q since U.c == 0]
+    //
+    //   One N×N factorisation, N + M right-hand sides.
 
-    Blk X;
-    X.P = lu.solve(Y.P);
-    X.Q = lu.solve(Y.Q - W.Q);
-    X.c = S(1);
+    auto WP = (V.P - U.P).eval();
+    expm_detail::lu_nopivot_factor<S, N>(WP.data());
 
-    // Undo the scaling.  X^2 = (X.P^2, X.P X.Q + X.Q, 1).
-    // Safe: operator* builds a full temporary before the assignment.
-    for (int i = 0; i < s; ++i) X = X * X;
+    Ad = V.P + U.P;
+    expm_detail::lu_nopivot_solve<S, N, N>(WP.data(), Ad.data());
 
-    Ad = X.P;
-    Bd = X.Q;
+    Bd = S(2) * U.Q;
+    expm_detail::lu_nopivot_solve<S, N, M>(WP.data(), Bd.data());
+
+    // Undo scaling.  s == 0 on the typical trajectory
+    // (||F||_1 ≈ 0.22 < th_top), so this loop is cold.
+    for (int i = 0; i < s; ++i) {
+        // BlockUT squaring with c = 1:
+        //   (P, Q, 1)^2 = (P^2, P*Q + Q, 1)
+        // Bd must be computed before Ad is overwritten.
+        const Eigen::Matrix<S,N,M> Bd_new = Ad * Bd + Bd;
+        Ad = (Ad * Ad).eval();
+        Bd = Bd_new;
+    }
 }
