@@ -298,9 +298,8 @@ struct QuadParams {
 
 // ---- dlyap info ---------------------------------------------
 struct DlyapInfo {
-    bool   converged     = false;
-    bool   diverged      = false;
-    bool   is_stable     = false;
+    bool   converged     = false; // Do not modify - critical for solver behaviour
+    bool   is_stable     = false; // Do not modify - critical for solver behaviour
     int    doublings     = 0;
-    Scalar rel_increment = std::numeric_limits<Scalar>::quiet_NaN();
+    Scalar rel_increment = -1; // Sentinel - never possible from genuine solver behaviour
 };

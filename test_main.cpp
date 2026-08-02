@@ -10,11 +10,8 @@
 //    build_flags in platformio.ini
 //    (EIGEN_NO_DEBUG / NDEBUG matter a lot — assertions in the fixed-size paths are otherwise a large fraction of runtime.)
 //
-//  C6: the harness runs the same trajectory twice, once with
-//  RMode::Dense (pre-C6 arithmetic) and once with RMode::Scalar,
-//  in one process. Both instantiations exist in one binary
-//  deliberately — comparing across separate builds or sessions
-//  is not trustworthy at this effect size.
+//  Note: the harness runs the same trajectory twice - once with RMode::Dense and once with RMode::Scalar - to compare performance.
+//  Largely an artifact of earlier benchmarks comparing the two test cases (both the tests needed to occur in the one script call), but retained throughout - a useful measurement to keep an eye on throughout optimisation/dev.
 //
 //  Trajectory data — exported from MATLAB, row-major.
 //
@@ -163,9 +160,7 @@ static void setup_controller(SDDREControllerT<RM>& ctrl) {
     ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 1.0, 1.0, 1.0, 5.2525, 0.0131, 0.0131;
     ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 47.0291, 46.9286, 43.9393, 119.3914, 0.0217, 0.0234;
 
-    // C6: R = r*I, stated as such. In RMode::Dense this fills the
-    // 6x6; in RMode::Scalar only r is kept.
-    ctrl.R.set(Scalar(1.048e-6));
+    ctrl.R.set(Scalar(1.048e-6)); // R = r*I, r ~= 1e-6
 
     ctrl.r_data = r_traj;
     ctrl.r_len  = N_STEPS;
@@ -198,13 +193,7 @@ static Scalar pct(std::vector<Scalar> v, double p) {
 }
 
 // ============================================================
-//  One full pass over the trajectory.
-//
-//  Returns the median total time so the caller can report the
-//  scalar-vs-dense difference directly. Iteration counts are
-//  summed as well: they are the implementation-independent
-//  quantity, and C6 is allowed to move them by a step or two
-//  (see the bit-exactness note in sddre_types.h).
+//  One full pass over the trajectory, storing the stats/diagnostics worth monitoring.
 // ============================================================
 struct RunResult {
     Scalar med_sdc = 0, med_dare = 0, med_ff = 0, med_tot = 0;
@@ -323,10 +312,10 @@ static void run_timing_test() {
         u_traj[0], u_traj[1], u_traj[2],
         u_traj[3], u_traj[4], u_traj[5]);
 
-    PRINT("=== R mode: dense (pre-C6) ===\n");
+    PRINT("=== R mode: dense ===\n");
     const RunResult dense = run_pass<RMode::Dense>(true);
 
-    PRINT("\n\n=== R mode: scalar (C6) ===\n");
+    PRINT("\n\n=== R mode: scalar ===\n");
     const RunResult scal = run_pass<RMode::Scalar>(true);
 
     // Second dense pass: session drift within one process. If this
@@ -339,7 +328,7 @@ static void run_timing_test() {
         return (b > 0) ? 100.0 * (double(a) - double(b)) / double(b) : 0.0;
     };
 
-    PRINT("\n\n=== C6 summary (median us) ===\n");
+    PRINT("\n\n=== Summary (median us) ===\n");
     PRINT("%-10s%10s%10s%10s%10s\n", "stage", "dense", "scalar", "delta", "%");
     PRINT("%-10s%10.3f%10.3f%10.3f%10.2f\n", "sdc",
           dense.med_sdc, scal.med_sdc, scal.med_sdc - dense.med_sdc,

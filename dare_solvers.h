@@ -130,8 +130,8 @@ inline MatNX dlyap_fast_c(
     MatNX X = Q;
     MatNX P = A;
 
-    Scalar ninc      = std::numeric_limits<Scalar>::infinity();
-    Scalar ninc_prev = std::numeric_limits<Scalar>::quiet_NaN();
+    Scalar ninc      = 0;
+    Scalar ninc_prev = 0;
 
     MatNX T, inc, Psq;                        // (‡) hoisted scratch
     int j = 1;
@@ -147,21 +147,16 @@ inline MatNX dlyap_fast_c(
         mm12_abt_sym(inc.data(), T.data(), P.data());  // (‡, v2) inc = T P', symmetric
         
         X += inc;
-
         ninc            = inc.norm();
         const Scalar nX = X.norm();
-        const Scalar r  = ninc / ninc_prev;   // NaN on the first pass
 
-        if (r < Scalar(1)) {                  // NaN < 1 is false -> skips j==1
-            if (ninc * r / (Scalar(1) - r) <= tol * nX) {
+        if (j > 1 && ninc_prev > Scalar(0)) {
+            const Scalar r = ninc / ninc_prev;
+            if (r < Scalar(1) && ninc * r / (Scalar(1) - r) <= tol * nX) {
                 info.converged = true;
                 info.is_stable = true;
                 break;
             }
-        } else if (j > 1 && std::isnan(r)) {
-            info.diverged  = true;
-            info.is_stable = false;
-            break;
         }
 
         ninc_prev = ninc;
@@ -169,6 +164,10 @@ inline MatNX dlyap_fast_c(
         mm12(Psq.data(), P.data(), P.data());      // (‡) no-alias temp
         P = Psq;                                   // (‡) replaces P = (P*P).eval()
     }
+
+    // The loop's behaviour: didn't converge within max_doublings -> declared unstable. If the loop hits max_doublings, then info.converged == false and info.is_stable == false (defaults, declared in sddre_types.h)
+    // Covers both genuine divergence and rho too close to 1 to resolve a solution (non-uniqueness condition not satisfied - the same failure mode as MATLAB's dlyap()).
+    // Note: setting info.diverged is redundant (covered by !converged, and info.diverged is not referenced anywhere else in the code) so has not been carried over from the previous commits.
 
     info.doublings     = j;
     info.rel_increment = ninc / std::max(X.norm(), SCALAR_EPS);
