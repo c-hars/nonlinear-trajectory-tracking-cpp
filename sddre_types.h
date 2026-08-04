@@ -31,28 +31,24 @@ constexpr int NY = 6;    // outputs (rows of C)
 constexpr Scalar SCALAR_EPS = std::numeric_limits<Scalar>::epsilon();
 
 // ---- Precision-dependent numerical tolerances ---------------
-//  Kept together deliberately: every constant here is tied to the
-//  unit roundoff of Scalar, and is wrong if blindly copied across
-//  precisions.
 
 template <typename S> struct sddre_tol;
 
 template <> struct sddre_tol<double> {
-    static constexpr double dlyap = 1e-14;   // ~45 * eps(double)
-    static constexpr int dlyap_max_doublings = 60; // covers rho up to 1 - 2^52 (double precision)
+    static constexpr double dlyap = 1e-14;           // ~45 * eps(double)
+    static constexpr int dlyap_max_doublings = 55;   // practical limit for any Schur-stable matrix; covers rho up to 1 - 2^-48 (16x double precision)
     static constexpr double dare  = 1e-4;
 };
 
 template <> struct sddre_tol<float> {
-    static constexpr float dlyap = 5e-6f; // ~42 * eps(float)
-    static constexpr int dlyap_max_doublings = 30;  // TODO: verify coverage up to 1 - 2^23 (single precision)
+    static constexpr float dlyap = 5e-6f;            // ~42 * eps(float)
+    static constexpr int dlyap_max_doublings = 25;   // practical limit for any Schur-stable matrix; covers rho up to 1 - 2^-19 (16x single precision)
     static constexpr float dare  = 1e-4f;
 };
 
 using Tol = sddre_tol<Scalar>;
 
 // ---- Fixed-size Eigen types ---------------------------------
-//  All stack-allocated — no heap in the hot path.
 using MatNX   = Eigen::Matrix<Scalar, NX, NX>;
 using MatNU   = Eigen::Matrix<Scalar, NU, NU>;
 using MatNY   = Eigen::Matrix<Scalar, NY, NY>;
@@ -75,13 +71,18 @@ using MatNX2 = Eigen::Matrix<Scalar, NX, 2 * NX>;
 // ============================================================
 //  In-place symmetrisation.
 //
-//  *** DO NOT write  P = (P + P.transpose()) * 0.5;  ***
+//  *** Why not:  P = (P + P.transpose()) * 0.5  ?  ***
 //  That aliases: Eigen assigns coefficient-wise, so P(i,j) is
 //  overwritten before P(j,i) reads it, and the result is wrong.
 //  (Eigen only auto-detects the bare  m = m.transpose()  case,
 //  not compound expressions like this one.)
-//
-//  This loop is also cheaper — n(n-1)/2 = 66 ops for n=12,
+// 
+//  The safe Eigen code would be:
+//    P = ((P + P.transpose()) * 0.5).eval(),
+//  which forces a temporary.
+// 
+//  This loop is cheaper in any case,
+//    n(n-1)/2 = 66 ops for n=12,
 //  and no temporary.
 // ============================================================
 template <typename MatT>
@@ -96,23 +97,20 @@ inline void symmetrise(MatT& X) {
 }
 
 // ============================================================
-//  C6 — input-weight structure exploitation
+//  Structure exploitation of R.
 //
-//  The controller's R is (here and typically) a scalar multiple of identity, r*I. Change 6 (C6) allows that structure to be exploited.
-//  The code should support both the dense and sparse extremes – full PSD R, to scalar multiple identity r*I. In between cases (e.g. diagonal or block structures) are neglected to keep the code simple + readily toggleable between; we only need to test the two extreme cases, the others lie within. Plus: r*I offers the most speedup, and is probably the most common choice (especially in aerospace where plants likely have symmetric actuator arrangements).
-// 
-// The weight matrix R is wrapped in a type parameterised on how much structure it is allowed to assume:
+//  R is often r*I; this wrapper is parameterised on how much
+//  structure R may assume:
 //
-//    RMode::Scalar — stores r alone. K'RK becomes r*(K'K),
-//                    R + B'PB becomes a diagonal add, and
-//                    B R^-1 B' becomes a scaled outer product
-//                    with no factorisation at all.
-//    RMode::Dense  — stores the full 6x6 and does exactly the
-//                    R arithmetic the pre-C6 code did.
+//    RMode::Scalar — stores r alone. Eliminates factorisations
+//                    and replaces matrix ops with scaled products.
+//    RMode::Dense  — stores the full 6×6; general-case arithmetic.
 //
-//  One textual body per operation, selected by if constexpr.
+//  Only the two structural extremes (Scalar and Dense) are supported —
+//  these bracket any intermediate structures (e.g. diagonal, block-diagonal).
 //
-//  NOT necessarily bit-identical across modes, especially in single-precision: r*(K'K) scales before the summation, while K'*(R*K) scales after, so the two can differ at the last bit or so – the precision difference is not a concern, but could manifest behaviourally which is a concern: near the DARE early-break threshold that could move a Newton-Kleinman iteration count by one: expected, and the reason total iteration counts are now reported/monitored in test_main.cpp.
+//  NB: modes are not necessarily bit-identical (e.g. r*(K'K)
+//  vs K'*(R*K) – these can differ at the last bit).
 // ============================================================
 enum class RMode { Scalar, Dense };
 
@@ -135,7 +133,6 @@ struct RWeight {
     RWeight() { set(Scalar(1)); }
 
     // ---- Setters ----------------------------------------
-    //  set(r) is the honest one — it says what the weight is.
     void set(Scalar r) {
         if constexpr (is_scalar) {
             R_ = r;
@@ -145,9 +142,8 @@ struct RWeight {
         }
     }
 
-    // set(Rm) accepts a full matrix so existing call sites and MATLAB-side exports keep working.
-    // In scalar mode it keeps only r and asserts the input really was r*I.
-    // Asserts compile out under NDEBUG. Set in the PlatformIO build; make sure the desktop g++ line keeps -DNDEBUG too, or this check runs on every call.
+    // set(Rm) accepts a full matrix
+    // Asserts compile out under NDEBUG; make sure the g++ build keeps -DNDEBUG, or this check runs on every call
     void set(const MatNU& Rm) {
         if constexpr (is_scalar) {
             const Scalar r = Rm(0, 0);
@@ -176,7 +172,6 @@ struct RWeight {
     // ---- Hot-path operations ------------------------------
 
     // S <- R + M
-    // Scalar mode touches 6 diagonal entries instead of 36.
     template <typename Derived>
     void set_R_plus(MatNU& S, const Eigen::MatrixBase<Derived>& M) const {
         if constexpr (is_scalar) {
@@ -187,21 +182,17 @@ struct RWeight {
         }
     }
 
-    //  X <- X + K'RK.
-    //  Scalar: one 12x6 * 6x12 gemm with alpha = r (864 madds).
-    //  Dense:  a 12x6 temporary then the same gemm (1296 madds).
-    //
-    //  Since K'RK is symmetric, one possible speedup stands out: selfadjointView<Lower>().rankUpdate(K.transpose(), r) would compute only the lower triangle: 468 madds, about 45% off.
-    //  Tried and rejected: measurably SLOWER on Cortex-M7. The saved arithmetic does not survive the consequences: the full matrix is needed, so the lower triangle has to be mirrored into the upper before use, and on this unit the load/store cost trumps the saving in arithmetic. Same result as the triangular-view shortcut in the DARE residual, for the same reason. Both are recorded as measured negatives.
+    //  X <- X + K'RK
+    //  Scalar: one gemm with alpha = r.  Dense: temporary + gemm.
+    //  rankUpdate (lower-tri only) was tried — slower on Cortex-M7; mirror-copy cost dominates.
     void add_KtRK(MatNX& X, const MatNUNX& K) const {
         if constexpr (is_scalar) X.noalias() += R_ * (K.transpose() * K);
         else                     X.noalias() += K.transpose() * R_ * K;
     }
 
-    //  G = B R^{-1} B'  (the SDA ctrb-gramian block).
-    //
-    //  Scalar mode deletes the 6x6 LDLT factorisation, and its 12-right-hand-side solve.
-    //  But, cold path only: this runs at k == 1 and on the Newton-Kleinman fallback, so it never shows up as an improvement in median compute.
+    //  G = B R^{-1} B'
+    //  Scalar mode replaces the LDLT factorisation + solve with one scalar division.
+    //  But cold path only (k == 1 and Newton-Kleinman fallback).
     MatNX B_Rinv_Bt(const MatNXNU& B) const {
         MatNX G;
         if constexpr (is_scalar) {
@@ -241,22 +232,14 @@ struct DARESolverInfo {
     bool   solve_success     = false;
     bool   unstable_k0       = false;  // NK: initial gain destabilising
     bool   used_sda_fallback = false;
-    bool   tol_is_estimate   = false;  // true when tol_achieved came from the
-                                       // NK Newton-increment identity rather
-                                       // than the full DARE residual
+    bool   tol_is_estimate   = false;  // true when tol_achieved came from the Newton-increment (rather than the full DARE residual)
 };
 
 struct SDDREOpts {
-    Scalar preview_horizon             = 2.0;  // s (inf -> constant-ref approx)
+    Scalar preview_horizon             = 2.0;   // [s]
     bool   use_full_fh_mpc_at_terminal = false;
     bool   always_use_full_fh_mpc      = false;
-
-    // C3: after the DARE solve, evaluate the TRUE relative residual once in
-    // compute_u (reusing the solver's gain) and overwrite tol_achieved /
-    // solve_success with it. Restores the health signal that the NK
-    // Newton-increment test no longer provides in-solver.
-    bool   post_residual_check         = false;
-
+    bool   post_residual_check         = false; // true -> evaluates the actual residual after the DARE solve (which uses the Newton-increment proxy throughout)
     DARESolverOpts dare;
 };
 

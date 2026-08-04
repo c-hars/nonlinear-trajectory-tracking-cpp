@@ -2,18 +2,15 @@
 //  test_main.cpp — SDDRE timing test harness
 //
 //  Dual-target: Teensy 4.1 (Arduino) or desktop (g++/clang++).
-//
-//  Desktop:
-//    g++ -std=c++17 -O2 -DNDEBUG -DEIGEN_NO_DEBUG -D_USE_MATH_DEFINES -I"C:\Users\conor\eigen" test_main.cpp -o test_sddre.exe
-//
-//  Teensy / PlatformIO:
-//    build_flags in platformio.ini
-//    (EIGEN_NO_DEBUG / NDEBUG matter a lot — assertions in the fixed-size paths are otherwise a large fraction of runtime.)
-//
-//  Note: the harness runs the same trajectory twice - once with RMode::Dense and once with RMode::Scalar - to compare performance.
-//  Largely an artifact of earlier benchmarks comparing the two test cases (both the tests needed to occur in the one script call), but retained throughout - a useful measurement to keep an eye on throughout optimisation/dev.
+//   Desktop:
+//        g++ -std=c++17 -O2 -DNDEBUG -DEIGEN_NO_DEBUG -D_USE_MATH_DEFINES -I"/path/to/eigen" test_main.cpp -o test_sddre.exe
+//   Teensy / PlatformIO:
+//        build_flags in platformio.ini
+//        (EIGEN_NO_DEBUG / NDEBUG matter a lot — assertions in the fixed-size paths are otherwise a large fraction of runtime.)
 //
 //  Trajectory data — exported from MATLAB, row-major.
+// 
+//  The harness runs the same trajectory twice — once with RMode::Dense, and once with RMode::Scalar.
 //
 // ============================================================
 
@@ -36,8 +33,7 @@ static Scalar x_traj[N_STEPS * NX];
 static Scalar u_traj[N_STEPS * NU];
 static Scalar r_traj[N_STEPS * NY];
 
-// Steps discarded before timing starts. First call pays for cold
-// caches and the SDA cold init; neither is steady-state cost.
+// Warmup steps before timing starts (discards cache construction time etc. – not part of the algorithm)
 constexpr int N_WARMUP = 20;
 
 #ifdef ARDUINO
@@ -113,9 +109,8 @@ static void setup_params(QuadParams& qp) {
 }
 
 // ============================================================
-//  Dummy trajectory.
-//  Timing is valid with dummy data; correctness is not.
-//  Replaced with actual MATLAB export data for SIL validation.
+//  Dummy trajectory – timing is valid, correctness is not.
+//  Retained as fallback if actual trajectory data is unavailable.
 // ============================================================
 [[maybe_unused]] static void generate_dummy_data(const QuadParams& qp) {
     std::memset(x_traj, 0, sizeof(x_traj));
@@ -168,7 +163,7 @@ static void setup_controller(SDDREControllerT<RM>& ctrl) {
     ctrl.opts.preview_horizon             = 2.0;
     ctrl.opts.use_full_fh_mpc_at_terminal = false;
     ctrl.opts.always_use_full_fh_mpc      = false;
-    ctrl.opts.post_residual_check         = false;  // C3: true residual as health signal (costs ~one residual eval per step)
+    ctrl.opts.post_residual_check         = false;
 
     ctrl.opts.dare.method    = DARESolverMethod::NK;
     ctrl.opts.dare.min_iters = 1;
@@ -192,9 +187,6 @@ static Scalar pct(std::vector<Scalar> v, double p) {
     return v[idx];
 }
 
-// ============================================================
-//  One full pass over the trajectory, storing the stats/diagnostics worth monitoring.
-// ============================================================
 struct RunResult {
     Scalar med_sdc = 0, med_dare = 0, med_ff = 0, med_tot = 0;
     Scalar p95_tot = 0, max_tot = 0;
@@ -203,13 +195,14 @@ struct RunResult {
     Scalar worst_res = 0;
 };
 
+// ============================================================
+//  One full pass over the trajectory, storing the stats/diagnostics worth monitoring.
+// ============================================================
 template <RMode RM>
 static RunResult run_pass(bool verbose)
 {
-    // Static rather than stack-local: the controller carries ~5.5 kB of
-    // fixed-size matrices, and the Wex cache is ~67 kB on the heap per
-    // instantiation (12 x (N + M + 1) doubles). Two instantiations is
-    // ~135 kB, comfortable in Teensy 4.1's RAM2.
+    // Static to avoid the stack (the controller + cache is ~70 kB, well beyond Teensy's default stack size)
+    // Each template instantiation gets its own copy in RAM2 (visible in the map)
     static SDDREControllerT<RM> ctrl;
     setup_controller(ctrl);
 
@@ -218,7 +211,7 @@ static RunResult run_pass(bool verbose)
         const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX);
         const Eigen::Map<const VecNU> uk(u_traj + (k - 1) * NU);
         SDDRESolveInfo winfo;
-        volatile Scalar sink = ctrl.compute_u(k * ctrl.qp.Ts, xk, k, uk, winfo)(0);
+        volatile Scalar sink = ctrl.compute_u(k * ctrl.qp.Ts, xk, k, uk, winfo)(0); // volatile to prevent dead code elimination
         (void)sink;
     }
     ctrl.reset();   // back to the cold P_ss so k == 1 takes the SDA path
@@ -318,9 +311,8 @@ static void run_timing_test() {
     PRINT("\n\n=== R mode: scalar ===\n");
     const RunResult scal = run_pass<RMode::Scalar>(true);
 
-    // Second dense pass: session drift within one process. If this
-    // differs from the first by more than the scalar-vs-dense gap,
-    // the gap is not measurable here and should not be reported.
+    // Second dense pass: session drift within one process.
+    // Provides an anchor for timing significance.
     PRINT("\n\n=== R mode: dense (repeat, drift check) ===\n");
     const RunResult dense2 = run_pass<RMode::Dense>(false);
 

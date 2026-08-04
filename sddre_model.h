@@ -24,9 +24,8 @@ inline MatNX get_A_sdc_quaternion(const VecNX& x, const QuadParams& qp)
 {
     const Scalar q1 = x(6), q2 = x(7), q3 = x(8);
 
-    // q0 from the norm constraint. Clamped at 0 so a slightly
-    // over-unity vector part can't produce NaN — MATLAB would
-    // go complex here and loud warn below 0.01.
+    // q0 from the norm constraint
+    // Clamped at 0 so a slightly over-unity vector part can't produce NaN (MATLAB would go complex here, loud warning below 0.01)
     const Scalar q0sq = Scalar(1) - q1 * q1 - q2 * q2 - q3 * q3;
     const Scalar q0   = std::sqrt(std::max(q0sq, Scalar(0)));
 
@@ -102,10 +101,10 @@ inline MatNXNU get_B_sdc(const VecNU& delta_u, const QuadParams& qp)
 
     for (int j = 0; j < NU; ++j) {
         const Scalar f = qp.kF * w(j);
-        Bc(5,  j) =  f              / qp.m;      // vel_z <- F_t / m
-        Bc(9,  j) =  f * qp.y(j)    / qp.I_xx;   // wx_dot <- tau_x / I_xx
-        Bc(10, j) = -f * qp.x(j)    / qp.I_yy;   // wy_dot <- tau_y / I_yy
-        Bc(11, j) = -qp.kM * w(j) * qp.dirs(j) / qp.I_zz;  // wz_dot
+        Bc(5,  j) =  f / qp.m;
+        Bc(9,  j) =  f * qp.y(j) / qp.I_xx;                // wx_dot = tau_x / I_xx
+        Bc(10, j) = -f * qp.x(j) / qp.I_yy;                // wy_dot = tau_y / I_yy
+        Bc(11, j) = -qp.kM * w(j) * qp.dirs(j) / qp.I_zz;  // wz_dot = tau_z / I_zz
     }
     return Bc;
 }
@@ -114,17 +113,10 @@ inline MatNXNU get_B_sdc(const VecNU& delta_u, const QuadParams& qp)
 //  c2d_zoh_expm  —  ZOH discretisation via Van Loan's method
 //                   (doi:10.1109/tac.1978.1101743)
 //
-//    M = expm([Ac Bc; 0 0] * Ts)
-//    Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
-//
-//  The augmented matrix would be 18x18 here.  Its bottom NU rows
-//  are zero, so every power keeps the form [P Q; 0 cI] and the
-//  exponential comes out as [Ad Bd; 0 I].  expm_pade_vanloan
-//  carries only the (P,Q,c) triple through the same Pade
-//  builders, so the zero blocks are never multiplied and the
-//  final solve is 12x12 rather than 18x18.
+//  Implements ZOH discretisation but via a reduced 12x12 solve,
+//  documented in expm_pade.h. ~2.3x faster than the structure-disregarding baseline.
 // 
-//  ~2.3x faster than the structure-disregarding baseline:
+//  MATLAB reference code:
 //      M = expm([Ac Bc; 0 0] * Ts)
 //      Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
 // ============================================================

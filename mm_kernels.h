@@ -2,27 +2,17 @@
 // ============================================================
 //  mm_kernels.h — hand-tiled small matrix kernels
 //
-//  Column-major throughout. Precision dispatch is by plain
-//  function overloading on double* / float*, so call sites are
-//  identical in either build and there is no template body for
-//  the compiler to (fail to) optimise.
+//  Column-major throughout. Plain overloading on double*/float*
+//  rather than templated — arm-none-eabi-gcc fails to
+//  scalar-replace a local accumulator array, turning every
+//  update into a stack load/store pair. All accumulators are
+//  named scalar locals instead.
 //
-//  Every accumulator is a named local scalar, written out by
-//  hand. A first attempt used one templated body with a local
-//  c[MR][NR] array, relying on -O3 scalar replacement to put it
-//  in registers; arm-none-eabi-gcc did NOT, and
-//  every accumulator update became a stack load/store pair
-//  (~2x on every stage). Hence: no accumulator arrays, ever.
-//
-//  Tile shapes — set by the FPv5-D16 register file, which has
-//  16 double registers aliasing 32 single registers:
-//
-//    double: 2x4 accumulator block (8 regs) + operands.
-//    float:  4x4 accumulator block (16 regs) + operands —
-//            twice the reuse per load, and FP32 FMA issues
-//            faster on the M7 on top of that.
-//
-//  mm12x6: double 2x3, float 4x3 (6 columns, so NR = 3).
+//  Tile shapes are set by the Cortex-M7 FPv5-D16 register file
+//  (16 double regs aliasing 32 single regs):
+//    double: 2x4 accumulator block + operands
+//    float:  4x4 accumulator block + operands
+//    mm12x6: double 2x3, float 4x3 (NR = 3 for 6 columns)
 // ============================================================
 
 // ============================================================
@@ -112,7 +102,7 @@ static inline void mm12_abt_sym(double* __restrict C,
         }
     }
     // Mirror lower -> upper. Overwrites the few upper entries the
-    // diagonal blocks did compute — enforces exact symmetry.
+    // diagonal blocks did compute – enforces exact symmetry.
     for (int c = 1; c < 12; ++c)
         for (int r = 0; r < c; ++r)
             C[r + 12*c] = C[c + 12*r];
@@ -144,7 +134,7 @@ static inline void mm12x6(double* __restrict C,
 }
 
 // y = F*x + w. F 12x12 column-major; x, y, w 12-vectors.
-// y must not alias x. Accumulators start from w — the add is free.
+// y must not alias x. Accumulators start from w – the add is free.
 static inline void mv12_fma(double* __restrict y,
                             const double* __restrict F,
                             const double* __restrict x,
@@ -167,7 +157,7 @@ static inline void mv12_fma(double* __restrict y,
 }
 
 // ============================================================
-//  float kernels — 4x4 tiles
+//  float kernels – 4x4 tiles
 //
 //  16 accumulators + 4 a + 4 b operands = 24 of the 32 S
 //  registers; the k loop does 16 FMAs per 8 loads instead of
@@ -273,7 +263,7 @@ static inline void mm12_abt_sym(float* __restrict C,
         }
     }
     // Mirror lower -> upper. Overwrites the few upper entries the
-    // diagonal blocks did compute — enforces exact symmetry.
+    // diagonal blocks did compute – enforces exact symmetry.
     for (int c = 1; c < 12; ++c)
         for (int r = 0; r < c; ++r)
             C[r + 12*c] = C[c + 12*r];
@@ -310,8 +300,7 @@ static inline void mm12x6(float* __restrict C,
 }
 
 // y = F*x + w. F 12x12 column-major; x, y, w 12-vectors.
-// y must not alias x. Accumulators start from w — the add is free.
-// 12 accumulators + operands fits the 32 S registers easily.
+// y must not alias x. Accumulators start from w – the add is free.
 static inline void mv12_fma(float* __restrict y,
                             const float* __restrict F,
                             const float* __restrict x,

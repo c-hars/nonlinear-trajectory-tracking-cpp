@@ -2,17 +2,12 @@
 // ============================================================
 //  sddre_controller.h — SDDRE trajectory-tracking controller
 //
-//  Port of compute_u_SDDRE_v3.m
+//  Templated on RMode: Scalar (R = rI, default) exploits the
+//  diagonal structure; Dense keeps full R for comparison.
+//  Both instantiations can coexist in the same binary.
 //
-//  The Wex (weighted-reference) cache uses a flat buffer.
-//  Default: heap-allocated std::vector, built once per
-//  trajectory. Later: will be swapped for a static array
-//  (sized to the constant-length preview window).
-//
-//  C6: the class is templated on RMode. SDDREController is the
-//  default instantiation; SDDREControllerT<RMode::Dense> is the
-//  pre-C6 arithmetic, kept live so the two can be measured in
-//  the same binary rather than across builds.
+//  Ported from compute_u_SDDRE_v3.m — step indices remain
+//  1-based to keep the two implementations diffable.
 // ============================================================
 
 #include "sddre_types.h"
@@ -23,14 +18,7 @@
 #include <stdint.h>
 
 // ============================================================
-//  Platform timing — cycle counter, not micros().
-//
-//  The C6 saving is on the order of a few hundred flops per
-//  Newton-Kleinman iteration against a Smith doubling costing
-//  ~5200, run 5-15 times – well under 1% of the DARE, likely
-//  close to the 1 us quantisation of micros(). Measuring it
-//  well requires a finer clock. And this change is long 
-//  overdue, we're at the stage of fine optimisations.
+//  Platform timing: now cycle counter (not micros())
 //
 //    Teensy 4.1 — DWT cycle counter, 1 tick = 1 CPU cycle
 //                 (1.67 ns at 600 MHz). Wraps every ~7.2 s;
@@ -45,15 +33,16 @@
 // ============================================================
 
 #ifdef ARDUINO
-  // Free-running cycle counter via the Cortex-M7 Data Watchpoint and Trace (DWT) unit. Registers are written out by address rather than pulling in Arduino.h, which this header deliberately keeps out of the way of Eigen.
-  // All four live in the ARMv7-M private peripheral bus at 0xE0000000
-  // DWT block base is 0xE0001000, the System Control Space (SCS) is 0xE000E000.
+  // Cortex-M7 DWT cycle counter
+  // - Registers addressed directly to avoid pulling Arduino.h into Eigen's include path
+  //   - All four live in the ARMv7-M private peripheral bus at 0xE0000000
+  // - DWT block base is 0xE0001000, the System Control Space (SCS) is 0xE000E000.
   #define SDDRE_DWT_CYCCNT (*(volatile uint32_t*)0xE0001004) // +0x004 cycle count, free-running, wraps at 2^32 (~7.16 s at 600 MHz)
   #define SDDRE_DWT_CTRL   (*(volatile uint32_t*)0xE0001000) // +0x000 DWT control; bit 0 = CYCCNTENA (Cycle Counter Enable)
   #define SDDRE_DWT_LAR    (*(volatile uint32_t*)0xE0001FB0) // +0xFB0 CoreSight Lock Access Register
   #define SDDRE_DEMCR      (*(volatile uint32_t*)0xE000EDFC) // SCS +0xDFC Debug Exception and Monitor Control
 
-  // Stock Teensy 4.1 core clock. Overridden by the build's F_CPU when present, so an overclocked build scales correctly.
+  // Default core clock - overridden by F_CPU if defined (so an overclocked build scales correctly)
   #ifndef SDDRE_CPU_HZ
     #ifdef F_CPU
       #define SDDRE_CPU_HZ (F_CPU)
@@ -122,7 +111,7 @@ public:
     // ---- Weight matrices (set once before first call) -------
     MatNYNX C   = MatNYNX::Zero();   // 6x12 output selection
     MatNY   Qy  = MatNY::Identity();
-    RType   R;                       // r*I — see RWeight
+    RType   R;
     MatNY   Qyf = MatNY::Identity();
 
     // ---- Reference trajectory --------------------------------
@@ -164,7 +153,6 @@ public:
 
         const MatNX Ac = get_A_sdc_quaternion(xk, qp);
 
-        // uk = max(uk, -nominal_omegas); uk = min(uk, max_du)
         const VecNU uk_clamped = uk_prev.cwiseMax(-qp.nominal_omegas)
                                         .cwiseMin(qp.max_du);
         const MatNXNU Bc = get_B_sdc(uk_clamped, qp);
@@ -180,7 +168,7 @@ public:
         // ------------------------------------------------
         t0 = sddre_ticks();
 
-        Eigen::LDLT<MatNU> S_ldlt;   // S = R + B'P_ss B, reused in step 3
+        Eigen::LDLT<MatNU> S_ldlt;   // S = R + B'P_ss B (reused in step 3)
 
         DARESolverOpts dare_opts = opts.dare;
         if (k == 1) dare_opts.method = DARESolverMethod::SDA;  // cold init
@@ -194,14 +182,12 @@ public:
             K_ss_ = compute_gain(B, R, P_ss_, A, S_ldlt);
 
         } else {
-            // C2: gain + S factorisation come back from the solver.
+            // Note: P, K and S factorisation all come back from the solver
             P_ss_ = iterative_dare(A, B, Q_, R, P_ss_, dare_opts,
                                    K_ss_, S_ldlt, dare_info);
 
-            // NK fallback: cold SDA when the warm start is destabilising.
-            if (dare_opts.method == DARESolverMethod::NK &&
-                !dare_info.solve_success && dare_info.unstable_k0)
-            {
+            // NK fallback: cold SDA when the warm start K0 is destabilising
+            if (dare_opts.method == DARESolverMethod::NK && !dare_info.solve_success && dare_info.unstable_k0) {
                 DARESolverInfo sda_info;
                 P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                                  dare_opts.sda_min_doublings,
@@ -211,14 +197,13 @@ public:
                 dare_info.tol_achieved      = sda_info.tol_achieved;
                 dare_info.solver_iterations = sda_info.solver_iterations;
                 dare_info.solve_success     = sda_info.solve_success;
-                dare_info.used_sda_fallback = true;   // MATLAB's 0.5 flag
+                dare_info.used_sda_fallback = true;
                 dare_info.tol_is_estimate   = false;
             }
         }
 
-        // C3: optional true-residual health check, reusing the gain.
-        // Overwrites the NK increment-based estimate with the directly
-        // evaluated relative residual (this is what SIL should compare).
+        // Optional true-residual health check.
+        // Overwrites the increment-based proxy with a direct DARE residual evaluation; this is what SIL must compare.
         if (opts.post_residual_check) {
             const Scalar res = compute_dare_residual(A, B, Q_, R, P_ss_, K_ss_);
             dare_info.tol_achieved    = res;
@@ -258,13 +243,10 @@ public:
 
                 const MatNX F = A_cl.transpose();
 
-                // VecNX v = (MatNX::Identity() - F).partialPivLu()
-                //               .solve(wex_col(k + M));
-
-                // for (int j = M - 1; j >= 1; --j)
-                //     v = F * v + wex_col(k + j);
-
-                // u = -K_ss_ * xk + S_ldlt.solve(B.transpose() * v);
+                // Raw algorithm:
+                //   v = (I - F)^-1 * wex(k+M)
+                //   for j = M-1 down to 1:  v = F*v + wex(k+j)
+                //   u = -K_ss * xk + S^-1 B' v
 
                 VecNX v_a = (MatNX::Identity() - F).partialPivLu().solve(wex_col(k + M));
                 VecNX v_b;
@@ -298,7 +280,7 @@ public:
                     //   Old code: P_term = (Q_ + K_j.transpose() * R * K_j + A_cl_j.transpose() * P_term * A_cl_j).eval();
                     //   Now: uses adaptive path, according to R matrice's RType.
                     MatNX P_next = Q_;                                        // P_next == Q
-                    R.add_KtRK(P_next, K_j);                                  // P_next += K_j'R K_j (P_next is what receives the KtRK sum; R.add_KtRK dispatches on RType (scalar or dense))
+                    R.add_KtRK(P_next, K_j);                                  // P_next += K_j'R K_j (P_next receives the sum)
                     P_next.noalias() += A_cl_j.transpose() * P_term * A_cl_j; // P_next += A_cl_j' P_{j+1} A_cl_j
                     P_term = P_next;                                          // P_term == P_j (ready as P_{j+1} for the next pass down)
                     symmetrise(P_term);
@@ -356,7 +338,8 @@ private:
         wex_valid_ = true;
     }
 
-    // 1-based MATLAB column -> 0-based buffer index. Open for debate Eigen::Map<const VecNX> instead of VecNX. No measurable performance increase, yet usage consequences.
+    // 1-based MATLAB column -> 0-based buffer index.
+    // Open for debate Eigen::Map<const VecNX> instead of VecNX. No measurable performance increase, yet usage consequences.
     VecNX wex_col(int matlab_col) const {
         return Eigen::Map<const VecNX>(
             wex_buf_.data() + static_cast<size_t>(matlab_col - 1) * NX);

@@ -6,33 +6,18 @@
 //  matrix exponential revisited", SIAM J. Matrix Anal. Appl.
 //  26(4):1179-1193.  Same algorithm family as MATLAB's expm.
 //
+//  The code walks a ladder of Padé degrees, picking the cheapest
+//  that covers ||A||_1. If none does, A is scaled down to the
+//  top threshold and squared back up after.
+// 
 //  Hand-rolled rather than <unsupported/Eigen/MatrixFunctions>
-//  so the cost is predictable, the code is auditable, and the
-//  exactness can be tuned — machine precision by default, but
-//  this is is likely not needed in practice: a dial for
-//  optimisation later, as required. And for this Teensy timing
-//  benchmark you want to know exactly which branch you're
-//  paying for.
+//  for predictable compile/cost/auditability, and tunable exactness
+//  (machine precision by default; a dial for later if needed).
 //
-//  Precision dispatch
-//  ------------------
-//  The theta_m thresholds are the largest ||A||_1 for which the
-//  [m/m] Pade approximant has backward error at or below the
-//  unit roundoff u of the working precision.  They therefore
-//  depend on u and MUST be swapped when Scalar changes.
-//
-//    double (u = 2^-53):  m in {3,5,7,9,13}, scale to theta_13
-//    float  (u = 2^-24):  m in {3,5,7},      scale to theta_7
-//
-//  Single precision stops at m=7 because there is no accuracy
-//  left to buy above it — theta_9/theta_13 are derived from a
-//  backward-error target ~9 orders tighter than float roundoff.
-//  (Same degree sets as Eigen's MatrixExponential.h.)
-//
+//  doi:10.1137/1.9780898717778.ch10
+//  doi:10.1137/090768539
 // ============================================================
 
-// doi:10.1137/1.9780898717778.ch10
-// https://www.cis.upenn.edu/~cis6100/higham_matrix_exponential_siam_2004.pdf
 
 #include <Eigen/Dense>
 #include <cmath>
@@ -73,7 +58,7 @@ struct expm_pade_traits<float> {
 // ------------------------------------------------------------
 namespace expm_detail {
 
-// Dense Eigen matrix: N diagonal adds instead of N² fill + N² scaled add.
+// N diagonal adds instead of N² fill + N² scaled add.
 template <typename MatT>
 inline void diag_add(MatT& X, typename MatT::Scalar s) {
     X.diagonal().array() += s;
@@ -217,10 +202,10 @@ MatT expm_pade(const MatT& Ain)
 //        [ 0   c*I ]     bottom-right always a multiple of I
 //
 //  because F^k = [A^k  A^(k-1) B; 0  0] for k >= 1.  That set is
-//  closed under +, -, scalar*, and *, so the Pade builders above
-//  run verbatim on the triple (P,Q,c) and never touch a zero
-//  block.  The coefficient tables are shared, not forked — only
-//  the driver differs (norm, solve, squaring).
+//  closed under +, -, scalar*, and *, so the Pade builders run
+//  on a compact (P,Q,c) triple and never touch a zero block.
+//  The final solve is NX x NX (12x12) rather than the full
+//  augmented (NX+NU) x (NX+NU) (18x18).
 //
 //  Per matrix product:  n^2(n+m) instead of (n+m)^3.
 //  NX=12, NU=6 -> 2592 vs 5832 multiply-adds.
@@ -252,7 +237,6 @@ inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
 }
 
 // Kernel-backed product for the concrete Teensy case.
-// (P1,Q1,c1)*(P2,Q2,c2) = (P1 P2,  P1 Q2 + c2 Q1,  c1 c2)
 template <typename S>
 inline BlockUT<S,12,6> operator*(const BlockUT<S,12,6>& a,
                                  const BlockUT<S,12,6>& b) {
@@ -290,11 +274,12 @@ inline void diag_add(BlockUT<S,N,M>& X, S s) {
 // ============================================================
 //  No-pivot LU factorisation and solve for small dense matrices.
 //
-//  Safe when the matrix is diagonally dominant. For the Van Loan
-//  solve, W.P = V.P - U.P has diagonal dominance factor >= 8
-//  at every Pade degree this code reaches.
+//  Safe when the matrix is diagonally dominant.
+
+//  For the Van Loan solve, W.P = V.P - U.P has diagonal dominance
+//  factor >= 8 at every Pade degree this code reaches.
 //
-//  Column-major throughout, matching Eigen's default storage.
+//  Column-major throughout (matching Eigen's default storage).
 // ============================================================
 
 template <typename S, int N>
@@ -342,12 +327,12 @@ inline void lu_nopivot_solve(const S* __restrict LU, S* __restrict B) {
 
 
 // ------------------------------------------------------------
-//  expm([Ac Bc; 0 0] * Ts) -> (Ad, Bd), without ever forming
-//  the (N+M) x (N+M) matrix.
+//  expm([Ac Bc; 0 0] * Ts) → (Ad, Bd), without forming
+//  the (N+M)×(N+M) matrix.
 //
-//  MUST be a template: the degree ladder names th9/th13, which
-//  do not exist in the float traits.  Only a dependent Th lets
-//  if-constexpr discard that branch un-instantiated.
+//  Must be a template (the degree ladder names th9/th13, which
+//  don't exist in the float traits; only a dependent Th lets
+//  if-constexpr discard that branch un-instantiated).
 // ------------------------------------------------------------
 template <typename S, int N, int M>
 void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
@@ -362,8 +347,8 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
 
     Blk       F { Ac * Ts, Bc * Ts, S(0) };
 
-    // ||F||_1 = max column sum.  Bottom block row is zero, so this
-    // is just the larger of the two blocks' max column sums.
+    // ||F||_1 = max column sum
+    // Bottom block row is zero, so this is just the larger of the two blocks' max column sums.
     const S nA = std::max(F.P.cwiseAbs().colwise().sum().maxCoeff(),
                           F.Q.cwiseAbs().colwise().sum().maxCoeff());
 
