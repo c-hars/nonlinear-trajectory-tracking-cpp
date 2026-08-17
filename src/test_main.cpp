@@ -163,7 +163,7 @@ static void setup_controller(SDOPTControllerT<RM>& ctrl) {
     ctrl.opts.preview_horizon             = 2.0;
     ctrl.opts.use_full_fh_mpc_at_terminal = false;
     ctrl.opts.always_use_full_fh_mpc      = false;
-    ctrl.opts.post_residual_check         = false;
+    ctrl.opts.post_residual_check         = true;
 
     ctrl.opts.dare.method    = DARESolverMethod::NK;
     ctrl.opts.dare.min_iters = 1;
@@ -247,7 +247,7 @@ static RunResult run_pass(bool verbose)
 
         // Print every step for the first 10, then every 20th
         if (verbose && (k <= 10 || k % 20 == 0)) {
-            PRINT("%4d, %7.2f, %7.2f, %7.2f, %7.2f, %2d, %7.1e,  %d,  %d  ",
+            PRINT("%4d, %7.2f, %7.2f, %7.2f, %7.2f, %2d, %7.6e,  %d,  %d  ",
                   k, info.time_sdc_discretize_us, info.time_dare_us,
                   info.time_feedforward_us, total,
                   info.dare_info.solver_iterations,

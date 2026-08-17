@@ -2,25 +2,53 @@
 // ============================================================
 //  linalg/compute_dare_residual.h
 // 
-//  Residual of the DARE in (Lyapunov) form:
+//  Residual of the DARE:
 //
-//    || A_cl' P A_cl + K'RK + Q - P ||_F / ||P||_F
-//
-//  i.e. normalised according to condition number: MATLAB
-//  version does not yet have this: keep in mind re SIL validation.
+//    || A_cl' P A_cl - P + Q + K'RK ||_F
 // 
-//  Normalising via P is a cheap proxy for full normalisation
-//  (see doi:10.1002/nla.251 and doi:10.11650/twjm/1500405875).
+//  Unnormalised (same as the MATLAB reference).
+//  Lyapunov form (expands to same numerator as Riccati form, has better numerics).
 // 
-//  NB: only valid for K computed from the same P. A robust
-//  version recomputes K from from a given P; usage here trusts
-//  the implementer to only use a fresh K from the same P.
+//  NB: only valid for K computed from the same P; the 6-arg form
+//  trusts the implementer to only use a valid K.
+// 
+//  Future work should consider enabling the normalised form for generality.
+//  One option: normalise via P (a cheap proxy for full normalisation).
+//  But full normalisation is preferable (and not that expensive).
+//  Normalised residual: num/den where
+//      num = norm(A_cl'*P*A_cl - P + Q + K'*R*K) as above, and
+//      den = norm(K'*(R+B'*P*B)*K)) + norm(P) + norm(Q)
+//  See doi:10.1002/nla.251 and doi:10.11650/twjm/1500405875.
 //
-//  Port of compute_dare_residual.m
 // ============================================================
 
 #include "types/defs.h"
 #include "linalg/compute_dare_gain.h"
+
+// 7-arg form: uses a supplied K and S.
+template <typename RW>
+inline Scalar compute_dare_residual(
+    const MatNX& A, const MatNXNU& B,
+    const MatNX& Q, const RW& R,
+    const MatNX& P, const MatNUNX& K,
+    const MatNU& S)
+{
+    const MatNX A_cl = A - B * K;
+
+    // A_cl'*P*A_cl + Q + K'*R*K for the numerator
+    MatNX P_rhs = Q;
+    R.add_KtRK(P_rhs, K);
+    P_rhs.noalias() += A_cl.transpose() * P * A_cl;
+    
+    // // K'*(R + B'PB)*K for the denominator (‡)
+    // // (†) is largely the same compute as unnormalised; (‡) comes with a ~3% compute penalty
+    // // The LDLT of S is also computed elsewhere and known; passed in to speed things up
+
+    // return (P_rhs - P).norm();
+    // return (P_rhs - P).norm() / P.norm(); // (†)
+    // return (P_rhs - P).norm() / P.norm() / (KtRplusBtPBK.norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
+    return (P_rhs - P).norm() / P.norm() / ((K.transpose() * S * K).norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
+}
 
 // 6-arg form: uses a supplied K.
 template <typename RW>
@@ -29,13 +57,11 @@ inline Scalar compute_dare_residual(
     const MatNX& Q, const RW& R,
     const MatNX& P, const MatNUNX& K)
 {
-    const MatNX A_cl = A - B * K;
 
-    MatNX P_rhs = Q;
-    R.add_KtRK(P_rhs, K);
-    P_rhs.noalias() += A_cl.transpose() * P * A_cl;
+    MatNU S;
+    R.set_R_plus(S, (B.transpose() * P * B).eval());
 
-    return (P_rhs - P).norm() / P.norm();
+    return compute_dare_residual(A,B,Q,R,P,K,S);
 }
 
 // 5-arg overload: recomputes K from the supplied P.

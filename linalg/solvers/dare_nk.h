@@ -64,8 +64,9 @@ inline MatNX dare_nk(
                 ((i - min_it) % opts.riccati_check_every == 0))
             {
                 // Gain from the updated P, kept for return.
-                K_out = compute_dare_gain(B, R, P, A, S_ldlt);
-                const Scalar res = compute_dare_residual(A, B, Q, R, P, K_out);
+                MatNU S;
+                K_out = compute_dare_gain(B, R, P, A, S_ldlt, S);
+                const Scalar res = compute_dare_residual(A, B, Q, R, P, K_out, S);
                 if (res < opts.tolerance) {
                     info.solver_iterations = i;
                     info.tol_achieved      = res;
@@ -117,7 +118,7 @@ inline MatNX dare_nk(
                 info.unstable_k0       = true;
                 info.solver_iterations = i;
                 K_out                  = compute_dare_gain(B, R, P, A, S_ldlt, S);
-                info.tol_achieved      = compute_dare_residual(A, B, Q, R, P, K_out);
+                info.tol_achieved      = compute_dare_residual(A, B, Q, R, P, K_out, S);
                 info.solve_success     = false;
                 return P;
             }
