@@ -1,6 +1,7 @@
 #pragma once
 // ============================================================
-//  sddre_controller.h — SDDRE trajectory-tracking controller
+//  controllers/sdopt_controller.h — SDOPT trajectory-tracking
+//                                    controller
 //
 //  Templated on RMode: Scalar (R = rI, default) exploits the
 //  diagonal structure; Dense keeps full R for comparison.
@@ -10,100 +11,45 @@
 //  1-based to keep the two implementations diffable.
 // ============================================================
 
-#include "sddre_types.h"
-#include "dare_solvers.h"
-#include "sddre_model.h"
+#include "types/defs.h"
+#include "types/r_weight.h"
+#include "linalg/solvers/solver_types.h"
+#include "linalg/solvers/dare_sda.h"
+#include "linalg/solvers/dare_nk.h"
+#include "linalg/solvers/c2d_zoh.h"
+#include "linalg/compute_dare_gain.h"
+#include "plant/sdc_model.h"
+#include "platform/timing.h"
+#include "platform/mm_kernels.h"
+
 #include <vector>
 #include <algorithm>
-#include <stdint.h>
+#include <cmath>
 
 // ============================================================
-//  Platform timing: now cycle counter (not micros())
-//
-//    Teensy 4.1 — DWT cycle counter, 1 tick = 1 CPU cycle
-//                 (1.67 ns at 600 MHz). Wraps every ~7.2 s;
-//                 unsigned subtraction handles that correctly
-//                 for any interval shorter than the period.
-//    Desktop    — steady_clock in nanoseconds. Actual
-//                 granularity is platform-dependent (~100 ns
-//                 via QueryPerformanceCounter on Windows),
-//                 still ~10x better than micros().
-//
-//  Reported times stay in microseconds, now fractional.
+//  Controller-level option / info structs
 // ============================================================
 
-#ifdef ARDUINO
-  // Cortex-M7 DWT cycle counter
-  // - Registers addressed directly to avoid pulling Arduino.h into Eigen's include path
-  //   - All four live in the ARMv7-M private peripheral bus at 0xE0000000
-  // - DWT block base is 0xE0001000, the System Control Space (SCS) is 0xE000E000.
-  #define SDDRE_DWT_CYCCNT (*(volatile uint32_t*)0xE0001004) // +0x004 cycle count, free-running, wraps at 2^32 (~7.16 s at 600 MHz)
-  #define SDDRE_DWT_CTRL   (*(volatile uint32_t*)0xE0001000) // +0x000 DWT control; bit 0 = CYCCNTENA (Cycle Counter Enable)
-  #define SDDRE_DWT_LAR    (*(volatile uint32_t*)0xE0001FB0) // +0xFB0 CoreSight Lock Access Register
-  #define SDDRE_DEMCR      (*(volatile uint32_t*)0xE000EDFC) // SCS +0xDFC Debug Exception and Monitor Control
+struct SDOPTOpts {
+    Scalar preview_horizon             = 2.0;   // [s]
+    bool   use_full_fh_mpc_at_terminal = false;
+    bool   always_use_full_fh_mpc      = false;
+    bool   post_residual_check         = false; // true -> evaluates the actual residual after the DARE solve (which uses the Newton-increment proxy throughout)
+    DARESolverOpts dare;
+};
 
-  // Default core clock - overridden by F_CPU if defined (so an overclocked build scales correctly)
-  #ifndef SDDRE_CPU_HZ
-    #ifdef F_CPU
-      #define SDDRE_CPU_HZ (F_CPU)
-    #else
-      #define SDDRE_CPU_HZ 600000000u
-    #endif
-  #endif
-
-  using sddre_tick_t = uint32_t;   // one tick = one CPU cycle
-
-  inline void sddre_timing_init() {
-      SDDRE_DEMCR    |= (1u << 24);        // TRCENA, Trace Enable (gates power and clock; without it the DWT registers read back as zero)
-      SDDRE_DWT_LAR   = 0xC5ACCE55u;       // CoreSight unlock key (Cortex-M7)
-      SDDRE_DWT_CYCCNT = 0;                // start from a known point
-      SDDRE_DWT_CTRL |= 1u;                // cycle counter enable (CYCCNT advances one per CPU cycle while set, frozen while clear)
-  }
-
-  inline sddre_tick_t sddre_ticks() { return SDDRE_DWT_CYCCNT; }
-
-  inline Scalar sddre_ticks_to_us(sddre_tick_t d) {
-      return static_cast<Scalar>(d) *
-             (Scalar(1e6) / Scalar(SDDRE_CPU_HZ));
-  }
-
-  inline Scalar sddre_tick_us() { return sddre_ticks_to_us(1); }
-
-#else
-  #include <chrono>
-
-  using sddre_tick_t = uint64_t;
-
-  inline void sddre_timing_init() {}
-
-  inline sddre_tick_t sddre_ticks() {
-      using namespace std::chrono;
-      static const auto t0 = steady_clock::now();
-      return static_cast<uint64_t>(
-          duration_cast<nanoseconds>(steady_clock::now() - t0).count());
-  }
-
-  inline Scalar sddre_ticks_to_us(sddre_tick_t d) {
-      return static_cast<Scalar>(d) * Scalar(1e-3);
-  }
-
-  inline Scalar sddre_tick_us() {
-      // Nominal period of steady_clock, in microseconds. The real
-      // granularity is usually coarser than this.
-      using P = std::chrono::steady_clock::period;
-      return Scalar(1e6) * Scalar(P::num) / Scalar(P::den);
-  }
-#endif
-
-inline Scalar _sddre_elapsed_us(sddre_tick_t start) {
-    return sddre_ticks_to_us(sddre_ticks() - start);
-}
+struct SDOPTSolveInfo {
+    Scalar         time_sdc_discretize_us = 0;
+    Scalar         time_dare_us           = 0;
+    Scalar         time_feedforward_us    = 0;
+    DARESolverInfo dare_info;
+};
 
 // ============================================================
-//  SDDREControllerT
+//  SDOPTControllerT
 // ============================================================
 template <RMode RM = SDDRE_R_MODE_DEFAULT>
-class SDDREControllerT {
+class SDOPTControllerT {
 public:
     static constexpr RMode r_mode = RM;
     using RType = RWeight<RM>;
@@ -120,7 +66,7 @@ public:
     int           r_len  = 0;
 
     // ---- Options / parameters --------------------------------
-    SDDREOpts  opts;
+    SDOPTOpts  opts;
     QuadParams qp;
 
     void reset() {
@@ -144,7 +90,7 @@ public:
     // =========================================================
     VecNU compute_u(Scalar /*tk*/, const VecNX& xk, int k,
                     const VecNU& uk_prev,
-                    SDDRESolveInfo& info)
+                    SDOPTSolveInfo& info)
     {
         // ------------------------------------------------
         //  1. SDC matrices + ZOH discretisation
@@ -179,11 +125,11 @@ public:
             P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                              dare_opts.sda_min_doublings,
                              dare_opts.sda_max_doublings, dare_info);
-            K_ss_ = compute_gain(B, R, P_ss_, A, S_ldlt);
+            K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_ldlt);
 
         } else {
             // Note: P, K and S factorisation all come back from the solver
-            P_ss_ = iterative_dare(A, B, Q_, R, P_ss_, dare_opts,
+            P_ss_ = dare_nk(A, B, Q_, R, P_ss_, dare_opts,
                                    K_ss_, S_ldlt, dare_info);
 
             // NK fallback: cold SDA when the warm start K0 is destabilising
@@ -192,7 +138,7 @@ public:
                 P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                                  dare_opts.sda_min_doublings,
                                  dare_opts.sda_max_doublings, sda_info);
-                K_ss_ = compute_gain(B, R, P_ss_, A, S_ldlt);
+                K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_ldlt);
 
                 dare_info.tol_achieved      = sda_info.tol_achieved;
                 dare_info.solver_iterations = sda_info.solver_iterations;
@@ -273,7 +219,7 @@ public:
                 VecNX v = CtQyf_ * r_end;
 
                 for (int j = M_cl - 1; j >= 1; --j) {
-                    const MatNUNX K_j    = compute_gain(B, R, P_term, A);
+                    const MatNUNX K_j    = compute_dare_gain(B, R, P_term, A);
                     const MatNX   A_cl_j = A - B * K_j;
 
                     // P_j    = Q + K_j'R K_j + A_cl_j' P_{j+1} A_cl_j
@@ -291,7 +237,7 @@ public:
                 }
 
                 Eigen::LDLT<MatNU> S_term_ldlt;
-                const MatNUNX Kk = compute_gain(B, R, P_term, A, S_term_ldlt);
+                const MatNUNX Kk = compute_dare_gain(B, R, P_term, A, S_term_ldlt);
                 u = -Kk * xk + S_term_ldlt.solve(B.transpose() * v);
             }
         }
@@ -351,4 +297,4 @@ private:
 };
 
 // Default instantiation — scalar R unless overridden at build time.
-using SDDREController = SDDREControllerT<>;
+using SDOPTController = SDOPTControllerT<>;

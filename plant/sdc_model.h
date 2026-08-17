@@ -1,15 +1,17 @@
 #pragma once
 // ============================================================
-//  sddre_model.h — SDC parameterisation + ZOH discretisation
+//  plant/sdc_model.h — SDC parameterisation
 //
 //  Ports of:
 //    get_A_matrix_SDRE_QuaternionAttitude.m
 //    get_B_matrix_SDRE.m
-//    c2d_zoh_expm.m
 // ============================================================
 
-#include "sddre_types.h"
-#include "expm_pade.h"
+#include "types/defs.h"
+#include "plant/quad_params.h"
+
+#include <cmath>
+#include <algorithm>
 
 // ============================================================
 //  get_A_sdc_quaternion
@@ -107,22 +109,4 @@ inline MatNXNU get_B_sdc(const VecNU& delta_u, const QuadParams& qp)
         Bc(11, j) = -qp.kM * w(j) * qp.dirs(j) / qp.I_zz;  // wz_dot = tau_z / I_zz
     }
     return Bc;
-}
-
-// ============================================================
-//  c2d_zoh_expm  —  ZOH discretisation via Van Loan's method
-//                   (doi:10.1109/tac.1978.1101743)
-//
-//  Implements ZOH discretisation but via a reduced 12x12 solve,
-//  documented in expm_pade.h. ~2.3x faster than the structure-disregarding baseline.
-// 
-//  MATLAB reference code:
-//      M = expm([Ac Bc; 0 0] * Ts)
-//      Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
-// ============================================================
-inline void c2d_zoh_expm(
-    const MatNX& Ac, const MatNXNU& Bc, Scalar Ts,
-    MatNX& Ad, MatNXNU& Bd)
-{
-    expm_pade_vanloan(Ac, Bc, Ts, Ad, Bd);
 }

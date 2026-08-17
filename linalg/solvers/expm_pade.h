@@ -22,7 +22,7 @@
 #include <Eigen/Dense>
 #include <cmath>
 #include <type_traits>
-#include "mm_kernels.h"
+#include "platform/mm_kernels.h"
 
 // ------------------------------------------------------------
 //  Degree-selection thresholds, per precision.

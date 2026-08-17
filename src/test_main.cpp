@@ -1,5 +1,5 @@
 // ============================================================
-//  test_main.cpp — SDDRE timing test harness
+//  test_main.cpp — SDOPT timing test harness
 //
 //  Dual-target: Teensy 4.1 (Arduino) or desktop (g++/clang++).
 //   Desktop:
@@ -15,7 +15,7 @@
 // ============================================================
 
 
-#include "sddre_controller.h"
+#include "controllers/sdopt_controller.h"
 
 #ifdef ARDUINO
   #include <Arduino.h>
@@ -37,7 +37,7 @@ static Scalar r_traj[N_STEPS * NY];
 constexpr int N_WARMUP = 20;
 
 #ifdef ARDUINO
-  #include "trajectory_data.h"   // x_traj_data[] etc. stay const double
+  #include "data/trajectory_data.h"   // x_traj_data[] etc. stay const double
 
   template <typename Src, typename Dst>
   static void copy_narrow(const Src* src, Dst* dst, size_t n) {
@@ -146,7 +146,7 @@ static void setup_params(QuadParams& qp) {
 }
 
 template <RMode RM>
-static void setup_controller(SDDREControllerT<RM>& ctrl) {
+static void setup_controller(SDOPTControllerT<RM>& ctrl) {
     // sel = [1,2,3,9,10,11] (MATLAB) -> 0-based state cols 0,1,2,8,9,10
     ctrl.C.setZero();
     const int sel[NY] = {0, 1, 2, 8, 9, 10};
@@ -203,14 +203,14 @@ static RunResult run_pass(bool verbose)
 {
     // Static to avoid the stack (the controller + cache is ~70 kB, well beyond Teensy's default stack size)
     // Each template instantiation gets its own copy in RAM2 (visible in the map)
-    static SDDREControllerT<RM> ctrl;
+    static SDOPTControllerT<RM> ctrl;
     setup_controller(ctrl);
 
     // ---- Warm-up: discarded ----------------------------------
     for (int k = 1; k <= N_WARMUP; ++k) {
         const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX);
         const Eigen::Map<const VecNU> uk(u_traj + (k - 1) * NU);
-        SDDRESolveInfo winfo;
+        SDOPTSolveInfo winfo;
         volatile Scalar sink = ctrl.compute_u(k * ctrl.qp.Ts, xk, k, uk, winfo)(0); // volatile to prevent dead code elimination
         (void)sink;
     }
@@ -230,7 +230,7 @@ static RunResult run_pass(bool verbose)
         const Eigen::Map<const VecNU> uk(u_traj + (k - 1) * NU);
 
         const sddre_tick_t t0 = sddre_ticks();
-        SDDRESolveInfo info;
+        SDOPTSolveInfo info;
         const VecNU u = ctrl.compute_u(k * ctrl.qp.Ts, xk, k, uk, info);
         const Scalar total = _sddre_elapsed_us(t0);
 
@@ -353,7 +353,7 @@ void setup() {
     while (!Serial) {}
     delay(500);
     sddre_timing_init();
-    PRINT("\n=== SDDRE Timing Test (Teensy 4.1) ===\n");
+    PRINT("\n=== SDOPT Timing Test (Teensy 4.1) ===\n");
     PRINT("NX=%d NU=%d NY=%d  N=%d\n\n", NX, NU, NY, N_STEPS);
     run_timing_test();
     PRINT("\nDone.\n");
@@ -365,7 +365,7 @@ void loop() {}
 
 int main() {
     sddre_timing_init();
-    std::printf("\n=== SDDRE Timing Test (desktop) ===\n");
+    std::printf("\n=== SDOPT Timing Test (desktop) ===\n");
     std::printf("NX=%d NU=%d NY=%d  N=%d\n\n", NX, NU, NY, N_STEPS);
     run_timing_test();
     std::printf("\nDone.\n");
