@@ -125,28 +125,30 @@ inline MatNX dare_nk(
             const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_ldlt, S);
 
             if (opts.early_break && (i >= opts.min_iters)) {
-                // Newton-increment identity, P-normalised
-                const MatNUNX dK  = K_new - K;
-                const Scalar  res = (dK.transpose() * (S * dK)).norm() / P.norm();
-                if (res < opts.tolerance) {
-                    info.solver_iterations = i;
-                    info.tol_achieved      = res;
-                    info.tol_is_estimate   = true;
-                    info.solve_success     = true;
-                    K_out                  = K_new;
-                    return P;
-
-                    // // Explicit check
-                    // const Scalar  res = compute_dare_residual(A, B, Q, R, P, K_new);
-                    // if (res < opts.tolerance) {
-                    //     info.solver_iterations = i;
-                    //     info.tol_achieved      = res;
-                    //     info.tol_is_estimate   = false;
-                    //     info.solve_success     = true;
-                    //     K_out                  = K_new;
-                    //     return P;
-                    // }
-                }
+                #if USE_INCREMENT_PROXY
+                    // Newton-increment identity
+                    const MatNUNX dK  = K_new - K;
+                    const Scalar  res = (dK.transpose() * (S * dK)).norm();
+                    if (res < opts.tolerance) {
+                        info.solver_iterations = i;
+                        info.tol_achieved      = res;
+                        info.tol_is_estimate   = true;
+                        info.solve_success     = true;
+                        K_out                  = K_new;
+                        return P;
+                    }
+                #else
+                    // Explicit DARE residual
+                    const Scalar res = compute_dare_residual(A, B, Q, R, P, K_new);
+                    if (res < opts.tolerance) {
+                        info.solver_iterations = i;
+                        info.tol_achieved      = res;
+                        info.tol_is_estimate   = false;
+                        info.solve_success     = true;
+                        K_out                  = K_new;
+                        return P;
+                    }
+                #endif
             }
             K = K_new;
             info.solver_iterations = i;

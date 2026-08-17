@@ -11,12 +11,17 @@ constexpr int NX = 12;   // states
 constexpr int NU = 6;    // inputs  (== n_rotors)
 constexpr int NY = 6;    // outputs (rows of C)
 
-// ---- Scalar type --------------------------------------------
-#ifndef SDDRE_USE_FLOAT
-  #define SDDRE_USE_FLOAT 0
+#ifndef USE_INCREMENT_PROXY
+  #define USE_INCREMENT_PROXY 0
 #endif
 
-#if SDDRE_USE_FLOAT
+#ifndef USE_FLOAT
+  #define USE_FLOAT 1
+#endif
+
+// ---- Scalar type --------------------------------------------
+
+#if USE_FLOAT
   using Scalar = float;
 #else
   using Scalar = double;

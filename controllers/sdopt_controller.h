@@ -149,7 +149,7 @@ public:
         }
 
         // Optional true-residual health check.
-        // Overwrites the increment-based proxy with a direct DARE residual evaluation; this is what SIL must compare.
+        // Overwrites any increment-based proxy with a direct DARE residual evaluation.
         if (opts.post_residual_check) {
             const Scalar res = compute_dare_residual(A, B, Q_, R, P_ss_, K_ss_);
             dare_info.tol_achieved    = res;
@@ -223,12 +223,11 @@ public:
                     const MatNX   A_cl_j = A - B * K_j;
 
                     // P_j    = Q + K_j'R K_j + A_cl_j' P_{j+1} A_cl_j
-                    //   Old code: P_term = (Q_ + K_j.transpose() * R * K_j + A_cl_j.transpose() * P_term * A_cl_j).eval();
-                    //   Now: uses adaptive path, according to R matrice's RType.
-                    MatNX P_next = Q_;                                        // P_next == Q
-                    R.add_KtRK(P_next, K_j);                                  // P_next += K_j'R K_j (P_next receives the sum)
-                    P_next.noalias() += A_cl_j.transpose() * P_term * A_cl_j; // P_next += A_cl_j' P_{j+1} A_cl_j
-                    P_term = P_next;                                          // P_term == P_j (ready as P_{j+1} for the next pass down)
+                    // Uses adaptive path, according to R matrice's RType.
+                    MatNX P_next = Q_;
+                    R.add_KtRK(P_next, K_j);                                  // P_next = P_j = Q + K_j'R K_j (P_next receives the sum)
+                    P_next.noalias() += A_cl_j.transpose() * P_term * A_cl_j; // P_next = P_j = Q + K_j'R K_j + A_cl_j' P_{j+1} A_cl_j
+                    P_term = P_next;                                          // P_term = P_j (ready as P_{j+1} for the next pass down)
                     symmetrise(P_term);
 
                     const Eigen::Map<const VecNY> r_j(
