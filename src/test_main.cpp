@@ -268,7 +268,7 @@ static RunResult run_pass(bool verbose)
     res.max_tot  = pct(t_tot, 100);
 
     if (verbose) {
-        PRINT("\n--- Timing (us) ---%10s%9s%9s%9s\n", "sdc", "dare", "ff", "total");
+        PRINT("\n--- Timing (us) ---%5s%9s%9s%9s\n", "sdc", "dare", "ff", "total");
         PRINT("  median: %14.3f%9.3f%9.3f%9.3f\n",
               res.med_sdc, res.med_dare, res.med_ff, res.med_tot);
         PRINT("  p95:    %14.3f%9.3f%9.3f%9.3f\n",

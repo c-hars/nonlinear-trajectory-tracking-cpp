@@ -1,9 +1,6 @@
 #pragma once
 // ============================================================
 //  types/defs.h — Dimensions, scalar type, Eigen aliases
-//
-//  Port of compute_u_SDDRE_v3 + iterative_dare to C++/Eigen
-//  targeting Teensy 4.1 (Cortex-M7, hardware double FPU).
 // ============================================================
 
 #include <Eigen/Dense>
@@ -28,21 +25,21 @@ constexpr Scalar SCALAR_EPS = std::numeric_limits<Scalar>::epsilon();
 
 // ---- Precision-dependent numerical tolerances ---------------
 
-template <typename S> struct sddre_tol;
+template <typename S> struct solve_prec;
 
-template <> struct sddre_tol<double> {
+template <> struct solve_prec<double> {
     static constexpr double dlyap = 1e-14;           // ~45 * eps(double)
     static constexpr int dlyap_max_doublings = 55;   // practical limit for any Schur-stable matrix; covers rho up to 1 - 2^-48 (16x double precision)
     static constexpr double dare  = 1e-4;
 };
 
-template <> struct sddre_tol<float> {
+template <> struct solve_prec<float> {
     static constexpr float dlyap = 5e-6f;            // ~42 * eps(float)
     static constexpr int dlyap_max_doublings = 25;   // practical limit for any Schur-stable matrix; covers rho up to 1 - 2^-19 (16x single precision)
     static constexpr float dare  = 1e-4f;
 };
 
-using Tol = sddre_tol<Scalar>;
+using Tol = solve_prec<Scalar>;
 
 // ---- Fixed-size Eigen types ---------------------------------
 using MatNX   = Eigen::Matrix<Scalar, NX, NX>;
