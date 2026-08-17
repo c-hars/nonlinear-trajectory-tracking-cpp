@@ -92,7 +92,7 @@ inline MatNX dare_nk(
     // ========================================================
     case DARESolverMethod::NK: {
         MatNU   S;                                       // R + B'PB, explicit
-        MatNUNX K = compute_dare_gain(B, R, P, A, S_ldlt); // gain of incoming P0
+        MatNUNX K = compute_dare_gain(B, R, P, A, S_ldlt, S); // gain of incoming P0
 
         for (int i = 1; i <= opts.max_iters; ++i) {
             const MatNX AK = A - B * K;
@@ -116,14 +116,14 @@ inline MatNX dare_nk(
                 // K_out still made consistent with the returned P (contract), though the SDA fallback discards both.
                 info.unstable_k0       = true;
                 info.solver_iterations = i;
-                K_out                  = compute_dare_gain(B, R, P, A, S_ldlt);
+                K_out                  = compute_dare_gain(B, R, P, A, S_ldlt, S);
                 info.tol_achieved      = compute_dare_residual(A, B, Q, R, P, K_out);
                 info.solve_success     = false;
                 return P;
             }
 
             // Gain of the new P — needed next iteration or as the returned gain either way, and it makes the increment test nearly free.
-            const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_ldlt);
+            const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_ldlt, S);
 
             if (opts.early_break && (i >= opts.min_iters)) {
                 // Newton-increment identity, P-normalised
