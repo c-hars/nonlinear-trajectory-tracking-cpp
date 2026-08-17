@@ -20,12 +20,12 @@ struct DARESolverOpts {
     int    riccati_check_every = 25;     // Riccati branch only
 
     // --- dlyap_sda (Smith doubling) parameters ---
-    Scalar dlyap_tolerance     = Tol::dlyap;
-    int    dlyap_max_doublings = Tol::dlyap_max_doublings;
+    Scalar dlyap_sda_tolerance     = Tol::dlyap;
+    int    dlyap_sda_max_doublings = Tol::dlyap_max_doublings;
 
     // --- dare_sda parameters ---
-    int    sda_min_doublings   = 1;
-    int    sda_max_doublings   = 40;
+    int    dare_sda_min_doublings   = 5;
+    int    dare_sda_max_doublings   = 40;
 };
 
 struct DARESolverInfo {

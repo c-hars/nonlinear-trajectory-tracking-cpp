@@ -1,19 +1,21 @@
 #pragma once
 // ============================================================
-//  linalg/solvers/dare_sda.h — Structure-preserving doubling
-//                               for the DARE
-//
-//      P = A'PA - A'PB(R + B'PB)^{-1}B'PA + Q
-//
-//  Doubles the invariant subspace of the symplectic pencil:
-//      Mk      = I + G_k H_k
-//      A_{k+1} = A_k (Mk \ A_k)
-//      G_{k+1} = G_k + A_k (Mk \ G_k) A_k'
-//      H_{k+1} = H_k + A_k' H_k (Mk \ A_k)
-//
-//  Cold solver (no P0 supplied).
-//
+//  dare_sda.h — solves the DARE
+// 
+//       P = A'PA - A'PB(R + B'PB)^{-1}B'PA + Q
+// 
+// 
+//  Cold solver (no P0 supplied). Preconditions are unchecked by design (hot-loop solver).
+// 
+//  Uses the structure-preserving doubling algorithm (SDA):
+//       Wk      = I + G_k*H_k
+//       A_{k+1} = A_k*(Wk\A_k)
+//       G_{k+1} = G_k + A_k*(Wk\G_k)*A_k'
+//       H_{k+1} = H_k + A_k'*H_k*(Wk\A_k)
+// 
 //  Port of dare_sda.m
+// 
+//  (doi:10.1080/00207170410001714988, doi:10.1002/gamm.202000018)
 // ============================================================
 
 #include "types/defs.h"
@@ -47,18 +49,15 @@ inline MatNX dare_sda(
         const MatNX Yk = Ssol.template leftCols<NX>();   // (I + GH) \ A_k
         const MatNX Zk = Ssol.template rightCols<NX>();  // (I + GH) \ G_k
 
-        // H and G both consume the OLD A_k — update A_k last.
-        // .eval() forces a temporary: H and G appear on both sides.
         MatNX AkTH = Ak.transpose() * H;
-        H += AkTH * Yk;                          symmetrise(H);
-        G += (Ak * Zk * Ak.transpose()).eval();  symmetrise(G);
+        H += AkTH * Yk;
+        G += (Ak * Zk * Ak.transpose()).eval();
+        symmetrise(H);
+        symmetrise(G);
         Ak = (Ak * Yk).eval();
 
         if (i >= min_doublings) {
-            // norm(Ak) is the algorithm's native monitor and nearly
-            // free. It also catches the case where further doublings
-            // cannot progress, which the residual test alone misses.
-            if (Ak.norm() < SCALAR_EPS) break;
+            if (Ak.norm() < SCALAR_EPS) break; // catches the case where further doublings cannot progress
             if (compute_dare_residual(A, B, Q, R, H) < tolerance) break;
         }
     }

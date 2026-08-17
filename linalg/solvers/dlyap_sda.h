@@ -1,23 +1,21 @@
 #pragma once
 // ============================================================
-//  linalg/solvers/dlyap_sda.h — Smith doubling for the Stein
-//                                equation
-//
-//      A X A' - X + Q = 0
-//
-//  (Same orientation as MATLAB-native dlyap, so NK calls it with A_K'.)
-//
-//  Accumulates  X = sum_k A^k Q (A^k)'  by repeated squaring.
-//  Stopping test is the geometric tail extrapolation from the
-//  MATLAB version: with r = ninc/ninc_prev < 1, the remaining
-//  tail is bounded by ninc*r/(1-r), which is compared against
-//  tol*||X||_F. Divergence shows up as reaching max_doublings.
-//
-//  is_stable is only asserted on convergence — running out of
-//  doublings leaves it false, which is what feeds the NK
-//  unstable-K0 fallback.
-//
+//  dlyap_sda.h — solves the discrete-time Lyapunov equation
+// 
+//       A*X*A' - X + Q = 0
+// 
+// 
+//  Cold solver (no X0 supplied). Preconditions are unchecked by design (hot-loop solver).
+// 
+//  Uses the Smith doubling algorithm (SDA). Each iteration computes:
+//       dX = P*X*P', X <- X + dX, P <- P^2
+// 
+//  Convergence requires a Schur-stable A; divergence shows up as reaching max_doublings, providing a stability test.
+//  Stopping test is the geometric tail extrapolation (same as the MATLAB version).
+// 
 //  Port of dlyap_sda.m
+// 
+//  (doi:10.1137/0116017, doi:10.1002/gamm.202000018)
 // ============================================================
 
 #include "types/defs.h"

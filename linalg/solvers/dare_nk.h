@@ -108,8 +108,7 @@ inline MatNX dare_nk(
             
 
             DlyapInfo dinfo;
-            P = dlyap_sda(AK.transpose(), Qk, dinfo,
-                          opts.dlyap_tolerance, opts.dlyap_max_doublings);
+            P = dlyap_sda(AK.transpose(), Qk, dinfo, opts.dlyap_sda_tolerance, opts.dlyap_sda_max_doublings);
 
             if (i == 1 && !dinfo.is_stable) {
                 // Non-converged initial gain, K0 was not in stability basin: NK will diverge. Signal the caller to fall back to a cold SDA solve.
@@ -136,6 +135,17 @@ inline MatNX dare_nk(
                     info.solve_success     = true;
                     K_out                  = K_new;
                     return P;
+
+                    // // Explicit check
+                    // const Scalar  res = compute_dare_residual(A, B, Q, R, P, K_new);
+                    // if (res < opts.tolerance) {
+                    //     info.solver_iterations = i;
+                    //     info.tol_achieved      = res;
+                    //     info.tol_is_estimate   = false;
+                    //     info.solve_success     = true;
+                    //     K_out                  = K_new;
+                    //     return P;
+                    // }
                 }
             }
             K = K_new;

@@ -123,8 +123,8 @@ public:
 
         if (dare_opts.method == DARESolverMethod::SDA) {
             P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
-                             dare_opts.sda_min_doublings,
-                             dare_opts.sda_max_doublings, dare_info);
+                             dare_opts.dare_sda_min_doublings,
+                             dare_opts.dare_sda_max_doublings, dare_info);
             K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_ldlt);
 
         } else {
@@ -136,8 +136,8 @@ public:
             if (dare_opts.method == DARESolverMethod::NK && !dare_info.solve_success && dare_info.unstable_k0) {
                 DARESolverInfo sda_info;
                 P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
-                                 dare_opts.sda_min_doublings,
-                                 dare_opts.sda_max_doublings, sda_info);
+                                 dare_opts.dare_sda_min_doublings,
+                                 dare_opts.dare_sda_max_doublings, sda_info);
                 K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_ldlt);
 
                 dare_info.tol_achieved      = sda_info.tol_achieved;

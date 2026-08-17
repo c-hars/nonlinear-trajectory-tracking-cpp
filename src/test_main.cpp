@@ -163,7 +163,7 @@ static void setup_controller(SDOPTControllerT<RM>& ctrl) {
     ctrl.opts.preview_horizon             = 2.0;
     ctrl.opts.use_full_fh_mpc_at_terminal = false;
     ctrl.opts.always_use_full_fh_mpc      = false;
-    ctrl.opts.post_residual_check         = true;
+    ctrl.opts.post_residual_check         = true;  // "false" when evaluating timing, "true" when doing SIL/HIL against MATLAB
 
     ctrl.opts.dare.method    = DARESolverMethod::NK;
     ctrl.opts.dare.min_iters = 1;
