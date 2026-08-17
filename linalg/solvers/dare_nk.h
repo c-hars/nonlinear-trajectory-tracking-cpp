@@ -64,9 +64,8 @@ inline MatNX dare_nk(
                 ((i - min_it) % opts.riccati_check_every == 0))
             {
                 // Gain from the updated P, kept for return.
-                MatNU S;
-                K_out = compute_dare_gain(B, R, P, A, S_ldlt, S);
-                const Scalar res = compute_dare_residual(A, B, Q, R, P, K_out, S);
+                K_out = compute_dare_gain(B, R, P, A, S_ldlt);
+                const Scalar res = compute_dare_residual(A, B, Q, R, P, K_out);
                 if (res < opts.tolerance) {
                     info.solver_iterations = i;
                     info.tol_achieved      = res;
@@ -93,7 +92,7 @@ inline MatNX dare_nk(
     // ========================================================
     case DARESolverMethod::NK: {
         MatNU   S;                                       // R + B'PB, explicit
-        MatNUNX K = compute_dare_gain(B, R, P, A, S_ldlt, S); // gain of incoming P0
+        MatNUNX K = compute_dare_gain(B, R, P, A, S_ldlt); // gain of incoming P0
 
         for (int i = 1; i <= opts.max_iters; ++i) {
             const MatNX AK = A - B * K;
@@ -117,14 +116,14 @@ inline MatNX dare_nk(
                 // K_out still made consistent with the returned P (contract), though the SDA fallback discards both.
                 info.unstable_k0       = true;
                 info.solver_iterations = i;
-                K_out                  = compute_dare_gain(B, R, P, A, S_ldlt, S);
-                info.tol_achieved      = compute_dare_residual(A, B, Q, R, P, K_out, S);
+                K_out                  = compute_dare_gain(B, R, P, A, S_ldlt);
+                info.tol_achieved      = compute_dare_residual(A, B, Q, R, P, K_out);
                 info.solve_success     = false;
                 return P;
             }
 
             // Gain of the new P — needed next iteration or as the returned gain either way, and it makes the increment test nearly free.
-            const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_ldlt, S);
+            const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_ldlt);
 
             if (opts.early_break && (i >= opts.min_iters)) {
                 // Newton-increment identity, P-normalised

@@ -25,13 +25,12 @@
 #include "types/defs.h"
 #include "linalg/compute_dare_gain.h"
 
-// 7-arg form: uses a supplied K and S.
+// 6-arg form: uses a supplied K and S.
 template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
     const MatNX& Q, const RW& R,
-    const MatNX& P, const MatNUNX& K,
-    const MatNU& S)
+    const MatNX& P, const MatNUNX& K)
 {
     const MatNX A_cl = A - B * K;
 
@@ -42,26 +41,13 @@ inline Scalar compute_dare_residual(
     
     // // K'*(R + B'PB)*K for the denominator (‡)
     // // (†) is largely the same compute as unnormalised; (‡) comes with a ~3% compute penalty
-    // // The LDLT of S is also computed elsewhere and known; passed in to speed things up
+    MatNU S;
+    R.set_R_plus(S, (B.transpose() * P * B).eval());
+    const MatNX KtRplusBtPBK = K.transpose() * S * K;
 
     // return (P_rhs - P).norm();
     // return (P_rhs - P).norm() / P.norm(); // (†)
-    // return (P_rhs - P).norm() / P.norm() / (KtRplusBtPBK.norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
-    return (P_rhs - P).norm() / P.norm() / ((K.transpose() * S * K).norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
-}
-
-// 6-arg form: uses a supplied K.
-template <typename RW>
-inline Scalar compute_dare_residual(
-    const MatNX& A, const MatNXNU& B,
-    const MatNX& Q, const RW& R,
-    const MatNX& P, const MatNUNX& K)
-{
-
-    MatNU S;
-    R.set_R_plus(S, (B.transpose() * P * B).eval());
-
-    return compute_dare_residual(A,B,Q,R,P,K,S);
+    return (P_rhs - P).norm() / P.norm() / (KtRplusBtPBK.norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
 }
 
 // 5-arg overload: recomputes K from the supplied P.
