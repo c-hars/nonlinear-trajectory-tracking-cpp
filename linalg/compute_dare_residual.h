@@ -22,9 +22,13 @@
 // ============================================================
 
 #include "types/defs.h"
-#include "linalg/compute_dare_gain.h"
 
-// 6-arg form: uses a supplied K and S.
+#if USE_TEENSY_KERNELS
+  #include "linalg/compute_dare_gain.h"
+#endif
+
+// 6-arg form: uses a supplied K.
+#if USE_TEENSY_KERNELS
 template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
@@ -32,23 +36,27 @@ inline Scalar compute_dare_residual(
     const MatNX& P, const MatNUNX& K)
 {
     const MatNX A_cl = A - B * K;
-
-    // A_cl'*P*A_cl + Q + K'*R*K for the numerator
     MatNX P_rhs = Q;
     R.add_KtRK(P_rhs, K);
     P_rhs.noalias() += A_cl.transpose() * P * A_cl;
-    
-    // // // K'*(R + B'PB)*K, for the denominator (‡)
-    // MatNU S;
-    // R.set_R_plus(S, (B.transpose() * P * B).eval());
-    // const MatNX KtRplusBtPBK = K.transpose() * S * K;
-
     return (P_rhs - P).norm();
-    // return (P_rhs - P).norm() / P.norm(); // (†)
-    // return (P_rhs - P).norm() / (KtRplusBtPBK.norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
 }
+#else
+inline Scalar compute_dare_residual(
+    const MatNX& A, const MatNXNU& B,
+    const MatNX& Q, const MatNU& R,
+    const MatNX& P, const MatNUNX& K)
+{
+    const MatNX A_cl = A - B * K;
+    MatNX P_rhs = Q;
+    P_rhs.noalias() += K.transpose() * R * K;
+    P_rhs.noalias() += A_cl.transpose() * P * A_cl;
+    return (P_rhs - P).norm();
+}
+#endif
 
 // 5-arg overload: recomputes K from the supplied P.
+#if USE_TEENSY_KERNELS
 template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
@@ -57,3 +65,13 @@ inline Scalar compute_dare_residual(
 {
     return compute_dare_residual(A, B, Q, R, P, compute_dare_gain(B, R, P, A));
 }
+#else
+inline Scalar compute_dare_residual(
+    const MatNX& A, const MatNXNU& B,
+    const MatNX& Q, const MatNU& R,
+    const MatNX& P)
+{
+    const MatNUNX K = (R + B.transpose() * P * B).llt().solve(B.transpose() * P * A);
+    return compute_dare_residual(A, B, Q, R, P, K);
+}
+#endif

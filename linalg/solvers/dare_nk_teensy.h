@@ -1,6 +1,10 @@
 #pragma once
 // ============================================================
-//  dare_nk.h — Solve the DARE iteratively from P0 (warm start)
+//  dare_nk_teensy.h — Solve the DARE iteratively from P0
+//
+//  Teensy-optimised version: returns K and S_llt via out-params
+//  so the caller can reuse the LLT factorisation in the
+//  feedforward step without refactorising.
 //
 //    NK      — Default. Newton-Kleinman via dlyap (quadratic
 //              convergence; P0 must yield a stabilising gain

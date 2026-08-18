@@ -1,21 +1,22 @@
 // ============================================================
-//  test_main.cpp — SDOPT timing test harness
+//  test_main.cpp — SDOPT test harness
 //
-//  Dual-target: Teensy 4.1 (Arduino) or desktop (g++/clang++).
-//   Desktop:
-//        g++ -std=c++17 -O2 -DNDEBUG -DEIGEN_NO_DEBUG -D_USE_MATH_DEFINES -I"/path/to/eigen" test_main.cpp -o test_sddre.exe
-//   Teensy / PlatformIO:
-//        build_flags in platformio.ini
-//        (EIGEN_NO_DEBUG / NDEBUG matter a lot — assertions in the fixed-size paths are otherwise a large fraction of runtime.)
+//  Uses trajectory data exported from MATLAB (row-major).
 //
-//  Trajectory data — exported from MATLAB, row-major.
-// 
-//  The harness runs the same trajectory twice — once with RMode::Dense, and once with RMode::Scalar.
+//  Dual-target (Desktop or Teensy 4.1).
+//  - Desktop: see Makefile
+//  - Teensy / PlatformIO: see build_flags in platformio.ini
+//  NB: EIGEN_NO_DEBUG / NDEBUG matter a lot (assertions in the fixed-size paths are otherwise a large fraction of runtime).
 //
 // ============================================================
 
+#include "types/defs.h"
 
-#include "controllers/sdopt_controller.h"
+#if USE_TEENSY_KERNELS
+  #include "controllers/sdopt_controller_teensy.h"
+#else
+  #include "controllers/sdopt_controller_generic.h"
+#endif
 
 #ifdef ARDUINO
   #include <Arduino.h>
@@ -69,9 +70,9 @@ constexpr int N_WARMUP = 20;
   }
 
   static bool load_trajectory_data() {
-      return load_bin("x_traj.bin", x_traj, N_STEPS * NX)
-          && load_bin("u_traj.bin", u_traj, N_STEPS * NU)
-          && load_bin("r_traj.bin", r_traj, N_STEPS * NY);
+      return load_bin("data/x_traj.bin", x_traj, N_STEPS * NX)
+          && load_bin("data/u_traj.bin", u_traj, N_STEPS * NU)
+          && load_bin("data/r_traj.bin", r_traj, N_STEPS * NY);
   }
 #endif
 
@@ -145,35 +146,6 @@ static void setup_params(QuadParams& qp) {
     }
 }
 
-template <RMode RM>
-static void setup_controller(SDOPTControllerT<RM>& ctrl) {
-    // sel = [1,2,3,9,10,11] (MATLAB) -> 0-based state cols 0,1,2,8,9,10
-    ctrl.C.setZero();
-    const int sel[NY] = {0, 1, 2, 8, 9, 10};
-    for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
-
-    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 9.999999999999999e-01, 9.999999999999999e-01, 9.999999999999999e-01, 5.252490160018791e+00, 1.313122540004698e-02, 1.313122540004698e-02;
-    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.702908333643190e+01, 4.692857975464757e+01, 4.393927906676037e+01, 1.193914043063267e+02, 2.174931323522640e-02, 2.338098610641778e-02;
-
-    ctrl.R.set(Scalar(1.047624419664024e-06)); // R = r*I, r ~= 1e-6
-
-    ctrl.r_data = r_traj;
-    ctrl.r_len  = N_STEPS;
-
-    ctrl.opts.preview_horizon             = 2.0;
-    ctrl.opts.use_full_fh_mpc_at_terminal = false;
-    ctrl.opts.always_use_full_fh_mpc      = false;
-    ctrl.opts.post_residual_check         = false;  // if USE_INCREMENT_PROXY is set, this must also be set for proper SIL/HIL against MATLAB
-
-    ctrl.opts.dare.method    = DARESolverMethod::NK;
-    ctrl.opts.dare.min_iters = 1;
-    ctrl.opts.dare.max_iters = 10;
-    ctrl.opts.dare.tolerance = 1e-4;
-
-    setup_params(ctrl.qp);
-    ctrl.reset();
-}
-
 #ifdef ARDUINO
   #define PRINT(...) Serial.printf(__VA_ARGS__)
 #else
@@ -196,15 +168,85 @@ struct RunResult {
 };
 
 // ============================================================
-//  One full pass over the trajectory, storing the stats/diagnostics worth monitoring.
+//  One full pass over the trajectory.
 // ============================================================
+
+#if USE_TEENSY_KERNELS
+
+// ---- Teensy path: templated on RMode ----
+template <RMode RM>
+static void setup_controller(SDOPTControllerT<RM>& ctrl) {
+    // sel = [1,2,3,9,10,11] (MATLAB) -> 0-based state cols 0,1,2,8,9,10
+    ctrl.C.setZero();
+    const int sel[NY] = {0, 1, 2, 8, 9, 10};
+    for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
+
+    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 9.999999999999999e-01, 9.999999999999999e-01, 9.999999999999999e-01, 5.252490160018791e+00, 1.313122540004698e-02, 1.313122540004698e-02;
+    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.702908333643190e+01, 4.692857975464757e+01, 4.393927906676037e+01, 1.193914043063267e+02, 2.174931323522640e-02, 2.338098610641778e-02;
+
+    ctrl.R.set(Scalar(1.047624419664024e-06)); // R = r*I, r ~= 1e-6
+
+    ctrl.r_data = r_traj;
+    ctrl.r_len  = N_STEPS;
+
+    ctrl.opts.preview_horizon             = 2.0;
+    ctrl.opts.use_full_fh_mpc_at_terminal = false;
+    ctrl.opts.always_use_full_fh_mpc      = false;
+    ctrl.opts.post_residual_check         = false;
+
+    ctrl.opts.dare.method    = DARESolverMethod::NK;
+    ctrl.opts.dare.min_iters = 1;
+    ctrl.opts.dare.max_iters = 10;
+    ctrl.opts.dare.tolerance = 1e-4;
+
+    setup_params(ctrl.qp);
+    ctrl.reset();
+}
+
 template <RMode RM>
 static RunResult run_pass(bool verbose)
 {
     // Static to avoid the stack (the controller + cache is ~70 kB, well beyond Teensy's default stack size)
-    // Each template instantiation gets its own copy in RAM2 (visible in the map)
     static SDOPTControllerT<RM> ctrl;
     setup_controller(ctrl);
+
+#else
+
+// ---- Generic path: non-templated ----
+static void setup_controller(SDOPTController& ctrl) {
+    ctrl.C.setZero();
+    const int sel[NY] = {0, 1, 2, 8, 9, 10};
+    for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
+
+    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 9.999999999999999e-01, 9.999999999999999e-01, 9.999999999999999e-01, 5.252490160018791e+00, 1.313122540004698e-02, 1.313122540004698e-02;
+    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.702908333643190e+01, 4.692857975464757e+01, 4.393927906676037e+01, 1.193914043063267e+02, 2.174931323522640e-02, 2.338098610641778e-02;
+
+    const Scalar r = Scalar(1.047624419664024e-06);
+    ctrl.R.setZero();
+    ctrl.R.diagonal().setConstant(r);
+
+    ctrl.r_data = r_traj;
+    ctrl.r_len  = N_STEPS;
+
+    ctrl.opts.preview_horizon             = 2.0;
+    ctrl.opts.use_full_fh_mpc_at_terminal = false;
+    ctrl.opts.always_use_full_fh_mpc      = false;
+
+    ctrl.opts.dare.method    = DARESolverMethod::NK;
+    ctrl.opts.dare.min_iters = 1;
+    ctrl.opts.dare.max_iters = 10;
+    ctrl.opts.dare.tolerance = 1e-4;
+
+    setup_params(ctrl.qp);
+    ctrl.reset();
+}
+
+static RunResult run_pass(bool verbose)
+{
+    static SDOPTController ctrl;
+    setup_controller(ctrl);
+
+#endif
 
     // ---- Warm-up: discarded ----------------------------------
     for (int k = 1; k <= N_WARMUP; ++k) {
@@ -305,6 +347,7 @@ static void run_timing_test() {
         u_traj[0], u_traj[1], u_traj[2],
         u_traj[3], u_traj[4], u_traj[5]);
 
+#if USE_TEENSY_KERNELS
     PRINT("=== R mode: dense ===\n");
     const RunResult dense = run_pass<RMode::Dense>(true);
 
@@ -312,7 +355,6 @@ static void run_timing_test() {
     const RunResult scal = run_pass<RMode::Scalar>(true);
 
     // Second dense pass: session drift within one process.
-    // Provides an anchor for timing significance.
     PRINT("\n\n=== R mode: dense (repeat, drift check) ===\n");
     const RunResult dense2 = run_pass<RMode::Dense>(false);
 
@@ -344,6 +386,12 @@ static void run_timing_test() {
           dense.worst_res, scal.worst_res);
     PRINT("\nInterpretation: the scalar-vs-dense gap is only meaningful if\n"
           "it exceeds the drift figure above.\n");
+
+#else
+    PRINT("=== Generic (Eigen) path ===\n");
+    const RunResult gen = run_pass(true);
+    (void)gen;
+#endif
 }
 
 #ifdef ARDUINO

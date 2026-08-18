@@ -11,12 +11,16 @@ constexpr int NX = 12;   // states
 constexpr int NU = 6;    // inputs  (== n_rotors)
 constexpr int NY = 6;    // outputs (rows of C)
 
-#ifndef USE_INCREMENT_PROXY
-  #define USE_INCREMENT_PROXY 0
+#ifndef USE_TEENSY_KERNELS
+  #define USE_TEENSY_KERNELS 0
 #endif
 
 #ifndef USE_FLOAT
   #define USE_FLOAT 1
+#endif
+
+#ifndef USE_INCREMENT_PROXY
+  #define USE_INCREMENT_PROXY 0
 #endif
 
 // ---- Scalar type --------------------------------------------

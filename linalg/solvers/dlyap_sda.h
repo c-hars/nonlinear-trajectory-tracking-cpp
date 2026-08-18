@@ -20,16 +20,18 @@
 
 #include "types/defs.h"
 #include "linalg/solvers/solver_types.h"
-#include "platform/mm_kernels.h"
+
+#if USE_TEENSY_KERNELS
+  #include "platform/mm_kernels.h"
+  static_assert(NX == 12, "mm12 kernels are hard-coded for 12x12");
+  static_assert(std::is_same<Scalar, float>::value ||
+                std::is_same<Scalar, double>::value,
+                "mm_kernels has tile shapes for float and double only");
+  static_assert(!(MatNX::Flags & Eigen::RowMajorBit), "mm12 kernels assume column-major");
+#endif
 
 #include <algorithm>
 #include <type_traits>
-
-static_assert(NX == 12, "mm12 kernels are hard-coded for 12x12");
-static_assert(std::is_same<Scalar, float>::value ||
-              std::is_same<Scalar, double>::value,
-              "mm_kernels has tile shapes for float and double only");
-static_assert(!(MatNX::Flags & Eigen::RowMajorBit), "mm12 kernels assume column-major");
 
 inline MatNX dlyap_sda(
     const MatNX& A, const MatNX& Q,
@@ -45,18 +47,24 @@ inline MatNX dlyap_sda(
     Scalar ninc      = 0;
     Scalar ninc_prev = 0;
 
-    MatNX T, inc, Psq;                        // (‡) hoisted scratch
+#if USE_TEENSY_KERNELS
+    MatNX T, inc, Psq;                        // hoisted scratch for kernels
+#endif
+
     int j = 1;
     for (j = 1; j <= max_doublings; ++j) {
         // X is symmetric, so inc = P X P' is too. Form T = P X in
         // full, then only the lower triangle of T P', and mirror —
         // saves roughly half of the second product per doubling.
-        // const MatNX T = P * X; // (†)
-        // MatNX inc; // (†)
-        // inc.noalias() = T * P.transpose(); // (†)
-        mm12(T.data(), P.data(), X.data());        // (‡) T   = P X
-        // mm12_abt(inc.data(), T.data(), P.data());  // (‡) inc = T P'
-        mm12_abt_sym(inc.data(), T.data(), P.data());  // (‡, v2) inc = T P', symmetric
+
+#if USE_TEENSY_KERNELS
+        mm12(T.data(), P.data(), X.data());            // T   = P X
+        mm12_abt_sym(inc.data(), T.data(), P.data());  // inc = T P', symmetric
+#else
+        const MatNX T = P * X;
+        MatNX inc;
+        inc.noalias() = T * P.transpose();
+#endif
         
         X += inc;
         ninc            = inc.norm();
@@ -72,14 +80,17 @@ inline MatNX dlyap_sda(
         }
 
         ninc_prev = ninc;
-        // P = (P * P).eval(); // (†)
-        mm12(Psq.data(), P.data(), P.data());      // (‡) no-alias temp
-        P = Psq;                                   // (‡) replaces P = (P*P).eval()
+
+#if USE_TEENSY_KERNELS
+        mm12(Psq.data(), P.data(), P.data());      // no-alias temp
+        P = Psq;
+#else
+        P = (P * P).eval();
+#endif
     }
 
     // The loop's behaviour: didn't converge within max_doublings -> declared unstable. If the loop hits max_doublings, then info.converged == false and info.is_stable == false (defaults, declared in solver_types.h)
     // Covers both genuine divergence and rho too close to 1 to resolve a solution (non-uniqueness condition not satisfied - the same failure mode as MATLAB's dlyap()).
-    // Note: setting info.diverged is redundant (covered by !converged, and info.diverged is not referenced anywhere else in the code) so has not been carried over from the previous commits.
 
     info.doublings     = j;
     info.rel_increment = ninc / std::max(X.norm(), SCALAR_EPS);

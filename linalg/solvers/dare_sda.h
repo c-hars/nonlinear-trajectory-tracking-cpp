@@ -22,17 +22,28 @@
 #include "linalg/solvers/solver_types.h"
 #include "linalg/compute_dare_residual.h"
 
+#if USE_TEENSY_KERNELS
 template <typename RW>
 inline MatNX dare_sda(
     const MatNX& A, const MatNXNU& B,
     const MatNX& Q, const RW& R,
+#else
+inline MatNX dare_sda(
+    const MatNX& A, const MatNXNU& B,
+    const MatNX& Q, const MatNU& R,
+#endif
     Scalar tolerance,
     int    min_doublings,
     int    max_doublings,
     DARESolverInfo& info)
 {
     MatNX Ak = A;
-    MatNX G  = R.B_Rinv_Bt(B);   // B R^{-1} B'
+
+#if USE_TEENSY_KERNELS
+    MatNX G = R.B_Rinv_Bt(B);
+#else
+    MatNX G = B * R.llt().solve(B.transpose());   // B R^{-1} B'
+#endif
     symmetrise(G);
     MatNX H  = Q;
 

@@ -22,7 +22,10 @@
 #include <Eigen/Dense>
 #include <cmath>
 #include <type_traits>
-#include "platform/mm_kernels.h"
+
+#if USE_TEENSY_KERNELS
+  #include "platform/mm_kernels.h"
+#endif
 
 // ------------------------------------------------------------
 //  Degree-selection thresholds, per precision.
@@ -236,6 +239,7 @@ inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
     return { a.P * b.P, a.P * b.Q + b.c * a.Q, a.c * b.c };
 }
 
+#if USE_TEENSY_KERNELS
 // Kernel-backed product for the concrete Teensy case.
 template <typename S>
 inline BlockUT<S,12,6> operator*(const BlockUT<S,12,6>& a,
@@ -247,6 +251,7 @@ inline BlockUT<S,12,6> operator*(const BlockUT<S,12,6>& a,
     r.c = a.c * b.c;
     return r;
 }
+#endif
 
 template <typename S, int N, int M>
 inline BlockUT<S,N,M> operator+(const BlockUT<S,N,M>& a,
@@ -271,11 +276,11 @@ inline void diag_add(BlockUT<S,N,M>& X, S s) {
     X.c += s;
 }
 
+#if USE_TEENSY_KERNELS
 // ============================================================
 //  No-pivot LU factorisation and solve for small dense matrices.
 //
 //  Safe when the matrix is diagonally dominant.
-
 //  For the Van Loan solve, W.P = V.P - U.P has diagonal dominance
 //  factor >= 8 at every Pade degree this code reaches.
 //
@@ -322,6 +327,7 @@ inline void lu_nopivot_solve(const S* __restrict LU, S* __restrict B) {
     for (int c = 0; c < NCOLS; ++c)
         lu_nopivot_solve_col<S, N>(LU, B + c * N);
 }
+#endif  // USE_TEENSY_KERNELS
 
 }  // namespace expm_detail
 
@@ -388,13 +394,17 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
 
     // r_m(F) = (V - U)^{-1}(V + U).
     //
-    //   W.P = V.P - U.P  — factored in place, no pivoting
-    //         (diagonal dominance factor >= 8 at all reachable norms)
-    //   Ad  = W.P^{-1} (V.P + U.P)
-    //   Bd  = W.P^{-1} (2 U.Q)         [Y.Q - W.Q = 2 U.Q since U.c == 0]
-    //
-    //   One N×N factorisation, N + M right-hand sides.
+    //   U.c == 0 always — every term carries F to an odd power >= 1 —
+    //   so W.c == Y.c == the Pade constant term, which is never zero.
+    //   Solving W X = Y then forces X.c = 1 and leaves
+    //     X.P = W.P^{-1} Y.P
+    //     X.Q = W.P^{-1} (Y.Q - W.Q)
+    //   One N x N factorisation, N + M right-hand sides, instead of
+    //   an (N+M) x (N+M) one.
 
+#if USE_TEENSY_KERNELS
+    // No-pivot LU: safe here because W.P = V.P - U.P has diagonal
+    // dominance factor >= 8 at all reachable norms.
     auto WP = (V.P - U.P).eval();
     expm_detail::lu_nopivot_factor<S, N>(WP.data());
 
@@ -403,6 +413,14 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
 
     Bd = S(2) * U.Q;
     expm_detail::lu_nopivot_solve<S, N, M>(WP.data(), Bd.data());
+#else
+    const Blk  W  = V - U;
+    const Blk  Y  = V + U;
+    const auto lu = W.P.partialPivLu();
+
+    Ad = lu.solve(Y.P);
+    Bd = lu.solve(Y.Q - W.Q);
+#endif
 
     // Undo scaling.  s == 0 on the typical trajectory
     // (||F||_1 ≈ 0.22 < th_top), so this loop is cold.
