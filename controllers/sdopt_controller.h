@@ -109,7 +109,7 @@ public:
         // ------------------------------------------------
         t0 = sddre_ticks();
 
-        Eigen::LDLT<MatNU> S_ldlt;   // S = R + B'P_ss B (reused in step 3)
+        Eigen::LLT<MatNU> S_llt;   // S = R + B'P_ss B (reused in step 3)
 
         DARESolverOpts dare_opts = opts.dare;
         if (k == 1) dare_opts.method = DARESolverMethod::SDA;  // cold init
@@ -120,12 +120,12 @@ public:
             P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                              dare_opts.dare_sda_min_doublings,
                              dare_opts.dare_sda_max_doublings, dare_info);
-            K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_ldlt);
+            K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_llt);
 
         } else {
             // Note: P, K and S factorisation all come back from the solver
             P_ss_ = dare_nk(A, B, Q_, R, P_ss_, dare_opts,
-                                   K_ss_, S_ldlt, dare_info);
+                                   K_ss_, S_llt, dare_info);
 
             // NK fallback: cold SDA when the warm start K0 is destabilising
             if (dare_opts.method == DARESolverMethod::NK && !dare_info.solve_success && dare_info.unstable_k0) {
@@ -133,7 +133,7 @@ public:
                 P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                                  dare_opts.dare_sda_min_doublings,
                                  dare_opts.dare_sda_max_doublings, sda_info);
-                K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_ldlt);
+                K_ss_ = compute_dare_gain(B, R, P_ss_, A, S_llt);
 
                 dare_info.tol_achieved      = sda_info.tol_achieved;
                 dare_info.solver_iterations = sda_info.solver_iterations;
@@ -169,7 +169,7 @@ public:
             const Eigen::Map<const VecNY> r_k(r_data + (k - 1) * NY);
             const MatNX I_minus_Ft = MatNX::Identity() - A_cl.transpose();
             const VecNX s = I_minus_Ft.partialPivLu().solve(CtQy_ * r_k);
-            u = -K_ss_ * xk + S_ldlt.solve(B.transpose() * s);
+            u = -K_ss_ * xk + S_llt.solve(B.transpose() * s);
 
         } else {
             const int M = static_cast<int>(
@@ -200,7 +200,7 @@ public:
                 }
                 const Eigen::Map<const VecNX> v(v_cur);
 
-                u = -K_ss_ * xk + S_ldlt.solve(B.transpose() * v);
+                u = -K_ss_ * xk + S_llt.solve(B.transpose() * v);
 
             } else {
                 // ---- Terminal: full finite-horizon LQT recursion ----
@@ -230,9 +230,9 @@ public:
                     v = A_cl_j.transpose() * v + CtQy_ * r_j;
                 }
 
-                Eigen::LDLT<MatNU> S_term_ldlt;
-                const MatNUNX Kk = compute_dare_gain(B, R, P_term, A, S_term_ldlt);
-                u = -Kk * xk + S_term_ldlt.solve(B.transpose() * v);
+                Eigen::LLT<MatNU> S_term_llt;
+                const MatNUNX Kk = compute_dare_gain(B, R, P_term, A, S_term_llt);
+                u = -Kk * xk + S_term_llt.solve(B.transpose() * v);
             }
         }
 
