@@ -17,10 +17,10 @@
 //  get_A_sdc_quaternion
 //
 //  State (0-based here, 1-based in MATLAB):
-//    [0:2]  pos          (MATLAB 1:3)
-//    [3:5]  vel          (MATLAB 4:6)
-//    [6:8]  q1,q2,q3     (MATLAB 7:9)    q0 recovered from norm
-//    [9:11] wx,wy,wz     (MATLAB 10:12)
+//    [0:2]  pos      
+//    [3:5]  vel      
+//    [6:8]  q1,q2,q3    (q0 recovered from norm)
+//    [9:11] wx,wy,wz 
 // ============================================================
 inline MatNX get_A_sdc_quaternion(const VecNX& x, const QuadParams& qp)
 {

@@ -1,16 +1,16 @@
 #pragma once
 // ============================================================
-//  linalg/solvers/c2d_zoh.h — ZOH discretisation via Van Loan's
-//                              method (doi:10.1109/tac.1978.1101743)
+//  c2d_zoh.h — ZOH discretisation via Van Loan's method
+//              (doi:10.1109/tac.1978.1101743)
 //
 //  Implements ZOH discretisation but via a reduced 12x12 solve,
-//  documented in expm_pade.h. ~2.3x faster than the structure-disregarding baseline.
+//  documented in expm_pade.h. ~2.3x faster than the
+//  structure-disregarding baseline.
 // 
-//  MATLAB reference code:
+//  MATLAB reference code (c2d_zoh_expm.m):
 //      M = expm([Ac Bc; 0 0] * Ts)
 //      Ad = M(1:n, 1:n),  Bd = M(1:n, n+1:end)
-//
-//  Port of c2d_zoh_expm.m
+// 
 // ============================================================
 
 #include "types/defs.h"

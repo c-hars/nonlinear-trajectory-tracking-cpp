@@ -1,9 +1,9 @@
 #pragma once
 // ============================================================
-//  plant/quad_params.h — Hexacopter plant parameters
+//  plant/quad_params.h — hexacopter plant parameters
 //
-//  Mirrors the fields the MATLAB SDC functions read off qp.
-//  Port of load_copter_params.m
+//  Ported from load_copter_params.m – C++ version of MATLAB's "qp" struct.
+//  Values are defined exactly as per the MATLAB code (for identical numerical precision).
 // ============================================================
 
 #include "types/defs.h"

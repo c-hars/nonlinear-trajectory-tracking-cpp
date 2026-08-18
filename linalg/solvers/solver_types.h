@@ -1,6 +1,6 @@
 #pragma once
 // ============================================================
-//  linalg/solvers/solver_types.h — Solver enums, options, info
+//  solver_types.h — solver enums, options, info
 // ============================================================
 
 #include "types/defs.h"

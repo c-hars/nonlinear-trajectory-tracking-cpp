@@ -1,11 +1,11 @@
 #pragma once
 // ============================================================
-//  linalg/solvers/dare_nk.h — Solve the DARE iteratively
-//                                     from P0 (warm started)
+//  dare_nk.h — Solve the DARE iteratively from P0 (warm start)
 //
-//    NK      — Newton-Kleinman via dlyap (quadratic convergence;
-//              P0 must yield a stabilising gain K0).
-//    Riccati — direct DARE recursion (linear convergence;
+//    NK      — Default. Newton-Kleinman via dlyap (quadratic
+//              convergence; P0 must yield a stabilising gain
+//              K0). 
+//    Riccati — direct DARE recursion (linear convergence; 
 //              globally stable from any PSD P0).
 //
 //  Port of iterative_dare.m
@@ -98,21 +98,15 @@ inline MatNX dare_nk(
             const MatNX AK = A - B * K;
 
             // Qk = Q + K'RK
-            // Open questions:
-            //  - is Q exactly symmetric (symmetrised at build)
-            //  - is K'RK is exactly symmetric
-            // ... or really, where does symmetrise() need to be.
             MatNX Qk = Q;
             R.add_KtRK(Qk, K);
-            symmetrise(Qk);
             
-
             DlyapInfo dinfo;
             P = dlyap_sda(AK.transpose(), Qk, dinfo, opts.dlyap_sda_tolerance, opts.dlyap_sda_max_doublings);
-
             if (i == 1 && !dinfo.is_stable) {
-                // Non-converged initial gain, K0 was not in stability basin: NK will diverge. Signal the caller to fall back to a cold SDA solve.
-                // K_out still made consistent with the returned P (contract), though the SDA fallback discards both.
+                // Non-converged initial gain, K0 was not in stability basin: NK will diverge.
+                // Signal the caller to fall back to a cold SDA solve.
+                // K_out is still made consistent with the returned P (contract), though the SDA fallback discards both.
                 info.unstable_k0       = true;
                 info.solver_iterations = i;
                 K_out                  = compute_dare_gain(B, R, P, A, S_ldlt, S);
@@ -121,9 +115,7 @@ inline MatNX dare_nk(
                 return P;
             }
 
-            // Gain of the new P — needed next iteration or as the returned gain either way, and it makes the increment test nearly free.
             const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_ldlt, S);
-
             if (opts.early_break && (i >= opts.min_iters)) {
                 #if USE_INCREMENT_PROXY
                     // Newton-increment identity

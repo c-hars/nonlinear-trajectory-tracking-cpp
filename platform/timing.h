@@ -1,6 +1,6 @@
 #pragma once
 // ============================================================
-//  platform/timing.h — Platform timing
+//  platform/timing.h — platform timing
 //
 //    Teensy 4.1 — DWT cycle counter, 1 tick = 1 CPU cycle
 //                 (1.67 ns at 600 MHz). Wraps every ~7.2 s;

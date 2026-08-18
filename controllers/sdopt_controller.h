@@ -1,12 +1,7 @@
 #pragma once
 // ============================================================
-//  controllers/sdopt_controller.h — SDOPT trajectory-tracking
-//                                    controller
-//
-//  Templated on RMode: Scalar (R = rI, default) exploits the
-//  diagonal structure; Dense keeps full R for comparison.
-//  Both instantiations can coexist in the same binary.
-//
+//  sdopt_controller.h — SDOPT trajectory-tracking controller
+// 
 //  Ported from compute_u_SDDRE_v3.m — step indices remain
 //  1-based to keep the two implementations diffable.
 // ============================================================
@@ -34,7 +29,7 @@ struct SDOPTOpts {
     Scalar preview_horizon             = 2.0;   // [s]
     bool   use_full_fh_mpc_at_terminal = false;
     bool   always_use_full_fh_mpc      = false;
-    bool   post_residual_check         = false; // true -> evaluates the actual residual after the DARE solve (which uses the Newton-increment proxy throughout)
+    bool   post_residual_check         = false;
     DARESolverOpts dare;
 };
 
