@@ -152,10 +152,10 @@ static void setup_controller(SDOPTControllerT<RM>& ctrl) {
     const int sel[NY] = {0, 1, 2, 8, 9, 10};
     for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
 
-    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 1.0, 1.0, 1.0, 5.2525, 0.0131, 0.0131;
-    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 47.0291, 46.9286, 43.9393, 119.3914, 0.0217, 0.0234;
+    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 1.0000e+00, 1.0000e+00, 1.0000e+00, 5.2525e+00, 1.3131e-02, 1.3131e-02;
+    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.7029e+01, 4.6929e+01, 4.3939e+01, 1.1939e+02, 2.1749e-02, 2.3381e-02;
 
-    ctrl.R.set(Scalar(1.048e-6)); // R = r*I, r ~= 1e-6
+    ctrl.R.set(Scalar(1.0476e-06)); // R = r*I, r ~= 1e-6
 
     ctrl.r_data = r_traj;
     ctrl.r_len  = N_STEPS;
@@ -226,8 +226,9 @@ static RunResult run_pass(bool verbose)
         PRINT("   k,     sdc,    dare,      ff,   total, it,      res, ok, fb\n");
 
     for (int k = 1; k <= N_STEPS; ++k) {
-        const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX);
-        const Eigen::Map<const VecNU> uk(u_traj + (k - 1) * NU);
+        const int u_idx = (k > 1) ? (k - 2) : 0;
+        const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX); // x_k
+        const Eigen::Map<const VecNU> uk(u_traj + u_idx * NU); // u_{k-1} ~= u_k
 
         const sddre_tick_t t0 = sddre_ticks();
         SDOPTSolveInfo info;
@@ -246,17 +247,29 @@ static RunResult run_pass(bool verbose)
             res.worst_res = info.dare_info.tol_achieved;
 
         // Print every step for the first 10, then every 20th
-        if (verbose && (k <= 10 || k % 20 == 0)) {
-            PRINT("%4d, %7.2f, %7.2f, %7.2f, %7.2f, %2d, %7.2e,  %d,  %d  ",
-                  k, info.time_sdc_discretize_us, info.time_dare_us,
-                  info.time_feedforward_us, total,
-                  info.dare_info.solver_iterations,
-                  info.dare_info.tol_achieved,
-                  info.dare_info.solve_success ? 1 : 0,
-                  info.dare_info.used_sda_fallback ? 1 : 0);
-            PRINT("u = [%7.1f %7.1f %7.1f %7.1f %7.1f %7.1f]\n",
-                  u(0), u(1), u(2), u(3), u(4), u(5));
+        if (k == 2) {
+            PRINT("\n=== B matrix (12x6) at k=2 ===\n");
+            for (int i = 0; i < info.B.rows(); ++i) {
+                for (int j = 0; j < info.B.cols(); ++j) {
+                    PRINT("%14.6e  ", info.B(i, j));
+                }
+                PRINT("\n");
+            }
+            PRINT("===========================\n");
         }
+
+        if (verbose && (k <= 10 || k % 20 == 0)) {
+            PRINT("%4d, %7.2f, %7.2f, %7.2f, %7.2f, %2d, %7.2e, %d, %d, "
+                "||A||=%8.4e ||B||=%8.4e ",
+                k, info.time_sdc_discretize_us, info.time_dare_us, 
+                info.time_feedforward_us, total, info.dare_info.solver_iterations, 
+                info.dare_info.tol_achieved, info.dare_info.solve_success ? 1 : 0, 
+                info.dare_info.used_sda_fallback ? 1 : 0,
+                info.norm_A, info.norm_B);
+            PRINT("u = [%7.1f %7.1f %7.1f %7.1f %7.1f %7.1f]\n", 
+                u(0), u(1), u(2), u(3), u(4), u(5));
+        }
+
         (void)u;
     }
 
