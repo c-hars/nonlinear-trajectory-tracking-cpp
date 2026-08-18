@@ -38,19 +38,17 @@ inline MatNX dare_sda(
 
     int i = 1;
     for (i = 1; i <= max_doublings; ++i) {
-        const MatNX Mk = MatNX::Identity() + G * H;
-
-        // One factorisation, two right-hand sides: [A_k, G_k]
+        
+        // Solve for Yk, Zk
+        const MatNX Wk = MatNX::Identity() + G * H;
         MatNX2 rhs;
         rhs.template leftCols<NX>()  = Ak;
         rhs.template rightCols<NX>() = G;
-        const MatNX2 Ssol = Mk.partialPivLu().solve(rhs);
+        const MatNX2 S = Wk.partialPivLu().solve(rhs); // one factorisation, two right-hand sides
+        const MatNX Yk = S.template leftCols<NX>();    // Yk = (I + GH) \ A_k
+        const MatNX Zk = S.template rightCols<NX>();   // Zk = (I + GH) \ G_k
 
-        const MatNX Yk = Ssol.template leftCols<NX>();   // (I + GH) \ A_k
-        const MatNX Zk = Ssol.template rightCols<NX>();  // (I + GH) \ G_k
-
-        MatNX AkTH = Ak.transpose() * H;
-        H += AkTH * Yk;
+        H += (Ak.transpose() * H * Yk).eval();
         G += (Ak * Zk * Ak.transpose()).eval();
         symmetrise(H);
         symmetrise(G);

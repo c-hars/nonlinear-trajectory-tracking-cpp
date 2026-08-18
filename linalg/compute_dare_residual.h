@@ -48,7 +48,7 @@ inline Scalar compute_dare_residual(
 
     return (P_rhs - P).norm();
     // return (P_rhs - P).norm() / P.norm(); // (†)
-    // return (P_rhs - P).norm() / P.norm() / (KtRplusBtPBK.norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
+    // return (P_rhs - P).norm() / (KtRplusBtPBK.norm() + P.norm() + Q.norm()); // (‡) full DNRes-normalised
 }
 
 // 5-arg overload: recomputes K from the supplied P.

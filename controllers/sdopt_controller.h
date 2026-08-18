@@ -42,10 +42,6 @@ struct SDOPTSolveInfo {
     Scalar         time_sdc_discretize_us = 0;
     Scalar         time_dare_us           = 0;
     Scalar         time_feedforward_us    = 0;
-    Scalar norm_A;
-    Scalar norm_B;
-    MatNX A;
-    MatNXNU B;
     DARESolverInfo dare_info;
 };
 
@@ -110,10 +106,6 @@ public:
         MatNX   A;
         MatNXNU B;
         c2d_zoh_expm(Ac, Bc, qp.Ts, A, B);
-        info.norm_A = A.norm();
-        info.norm_B = B.norm();
-        info.A = A;
-        info.B = B;
 
         info.time_sdc_discretize_us = _sddre_elapsed_us(t0);
 

@@ -102,13 +102,14 @@ struct RWeight {
 
     //  G = B R^{-1} B'
     //  Scalar mode replaces the LDLT factorisation + solve with one scalar division.
-    //  But cold path only (k == 1 and Newton-Kleinman fallback).
+    //  LLT instead of LDLT since R is SPD (and is well-conditioned – just has small entries).
+    //  Cold path only (k == 1 and Newton-Kleinman fallback).
     MatNX B_Rinv_Bt(const MatNXNU& B) const {
         MatNX G;
         if constexpr (is_scalar) {
             G.noalias() = (Scalar(1) / R_) * (B * B.transpose());
         } else {
-            const MatNUNX Rinv_Bt = R_.ldlt().solve(B.transpose());
+            const MatNUNX Rinv_Bt = R_.llt().solve(B.transpose());
             G.noalias() = B * Rinv_Bt;
         }
         return G;
