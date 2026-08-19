@@ -23,12 +23,12 @@
 
 #include "types/defs.h"
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
   #include "linalg/compute_dare_gain.h"
 #endif
 
 // 6-arg form: uses a supplied K.
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
 template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
@@ -56,7 +56,7 @@ inline Scalar compute_dare_residual(
 #endif
 
 // 5-arg overload: recomputes K from the supplied P.
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
 template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,

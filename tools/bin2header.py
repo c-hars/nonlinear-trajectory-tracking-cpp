@@ -17,10 +17,10 @@ def bin_to_header(bin_path, var_name, n_doubles):
 NX, NU, NY = 12, 6, 6
 
 header = "#pragma once\n// Auto-generated from MATLAB trajectory export\n\n"
-header += bin_to_header("x_traj.bin", "x_traj_data", N * NX) + "\n\n"
-header += bin_to_header("u_traj.bin", "u_traj_data", N * NU) + "\n\n"
-header += bin_to_header("r_traj.bin", "r_traj_data", N * NY) + "\n"
+header += bin_to_header("data/x_traj.bin", "x_traj_data", N * NX) + "\n\n"
+header += bin_to_header("data/u_traj.bin", "u_traj_data", N * NU) + "\n\n"
+header += bin_to_header("data/r_traj.bin", "r_traj_data", N * NY) + "\n"
 
-with open("include/trajectory_data.h", "w") as f:
+with open("data/trajectory_data.h", "w") as f:
     f.write(header)
 print(f"Written {N*(NX+NU+NY)} doubles to trajectory_data.h")

@@ -24,8 +24,8 @@
 
 enum class RMode { Scalar, Dense };
 
-#ifndef SDDRE_R_MODE_DEFAULT
-  #define SDDRE_R_MODE_DEFAULT RMode::Scalar
+#ifndef SDOPT_R_MODE_DEFAULT
+  #define SDOPT_R_MODE_DEFAULT RMode::Scalar
 #endif
 
 inline const char* r_mode_name(RMode m) {
@@ -52,20 +52,8 @@ struct RWeight {
         }
     }
 
-    // set(Rm) accepts a full matrix
-    // Asserts compile out under NDEBUG; make sure the g++ build keeps -DNDEBUG, or this check runs on every call
     void set(const MatNU& Rm) {
-        if constexpr (is_scalar) {
-            const Scalar r = Rm(0, 0);
-            assert(r > Scalar(0) &&
-                   "RMode::Scalar requires R = r*I with r > 0");
-            assert((Rm - r * MatNU::Identity()).cwiseAbs().maxCoeff()
-                       <= Scalar(8) * SCALAR_EPS * std::abs(r) &&
-                   "RMode::Scalar requires R = r*I");
-            R_ = r;
-        } else {
-            R_ = Rm;
-        }
+        R_ = Rm;
     }
 
     // ---- Accessors ---------------------------------------

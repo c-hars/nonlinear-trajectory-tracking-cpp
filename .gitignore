@@ -4,3 +4,4 @@
 *.exe
 data/*
 test_sdopt
+*.d

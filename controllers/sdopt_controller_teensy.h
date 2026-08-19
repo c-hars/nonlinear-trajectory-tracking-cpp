@@ -6,8 +6,11 @@
 //  products, LLT passthrough from DARE to feedforward, mv12_fma
 //  in the costate sweep.
 //
-//  Ported from compute_u_SDDRE_v3.m — step indices remain
-//  1-based to keep the two implementations diffable.
+//  Mutually exclusive with sdopt_controller_generic.h — both
+//  define SDOPTController.
+// 
+//  Ported from compute_u_SDDRE_v3.m. Step indices remain 1-based
+//  to keep the implementation diffable against MATLAB.
 // ============================================================
 
 #include "types/defs.h"
@@ -30,25 +33,12 @@
 //  Controller-level option / info structs
 // ============================================================
 
-struct SDOPTOpts {
-    Scalar preview_horizon             = 2.0;   // [s]
-    bool   use_full_fh_mpc_at_terminal = false;
-    bool   always_use_full_fh_mpc      = false;
-    bool   post_residual_check         = false;
-    DARESolverOpts dare;
-};
-
-struct SDOPTSolveInfo {
-    Scalar         time_sdc_discretize_us = 0;
-    Scalar         time_dare_us           = 0;
-    Scalar         time_feedforward_us    = 0;
-    DARESolverInfo dare_info;
-};
+#include "controllers/sdopt_opts.h"
 
 // ============================================================
 //  SDOPTControllerT
 // ============================================================
-template <RMode RM = SDDRE_R_MODE_DEFAULT>
+template <RMode RM = SDOPT_R_MODE_DEFAULT>
 class SDOPTControllerT {
 public:
     static constexpr RMode r_mode = RM;
@@ -76,6 +66,10 @@ public:
         rebuild_weight_cache();
     }
 
+    void set_R(Scalar r) {
+        R.set(r);
+    }
+
     // Call this if C, Qy or Qyf change without a full reset().
     void rebuild_weight_cache() {
         CtQy_  = C.transpose() * Qy;
@@ -95,7 +89,7 @@ public:
         // ------------------------------------------------
         //  1. SDC matrices + ZOH discretisation
         // ------------------------------------------------
-        sddre_tick_t t0 = sddre_ticks();
+        sdopt_tick_t t0 = sdopt_ticks();
 
         const MatNX Ac = get_A_sdc_quaternion(xk, qp);
 
@@ -107,12 +101,12 @@ public:
         MatNXNU B;
         c2d_zoh_expm(Ac, Bc, qp.Ts, A, B);
 
-        info.time_sdc_discretize_us = _sddre_elapsed_us(t0);
+        info.time_sdc_discretize_us = sdopt_elapsed_us(t0);
 
         // ------------------------------------------------
         //  2. Solve DARE
         // ------------------------------------------------
-        t0 = sddre_ticks();
+        t0 = sdopt_ticks();
 
         Eigen::LLT<MatNU> S_llt;   // S = R + B'P_ss B (reused in step 3)
 
@@ -158,12 +152,12 @@ public:
         }
 
         info.dare_info    = dare_info;
-        info.time_dare_us = _sddre_elapsed_us(t0);
+        info.time_dare_us = sdopt_elapsed_us(t0);
 
         // ------------------------------------------------
         //  3. Feedforward
         // ------------------------------------------------
-        t0 = sddre_ticks();
+        t0 = sdopt_ticks();
 
         const MatNX   A_cl = A - B * K_ss_;
 
@@ -241,7 +235,7 @@ public:
             }
         }
 
-        info.time_feedforward_us = _sddre_elapsed_us(t0);
+        info.time_feedforward_us = sdopt_elapsed_us(t0);
         return u;
     }
 

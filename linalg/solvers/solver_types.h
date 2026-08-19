@@ -13,11 +13,13 @@ enum class DARESolverMethod { NK, Riccati, SDA };
 
 struct DARESolverOpts {
     DARESolverMethod method = DARESolverMethod::NK;
-    int    min_iters           = 1;       // recommended default
-    int    max_iters           = 10;      // conservative default
+    int    min_iters_nk        = 1;       // recommended default
+    int    max_iters_nk        = 10;      // conservative default
     bool   early_break         = true;
     Scalar tolerance           = Tol::dare;   // DARE residual threshold
-    int    riccati_check_every = 25;     // Riccati branch only
+    static constexpr int RICCATI_ITERS_PER_NK = 25; // One NK iteration ~= this many Riccati iterations in compute time
+
+    int    riccati_check_every = RICCATI_ITERS_PER_NK;     // Riccati branch only
 
     // --- dlyap_sda (Smith doubling) parameters ---
     Scalar dlyap_sda_tolerance     = Tol::dlyap;
@@ -30,7 +32,7 @@ struct DARESolverOpts {
 
 struct DARESolverInfo {
     int    solver_iterations = 0;
-    Scalar tol_achieved      = std::numeric_limits<Scalar>::quiet_NaN();
+    Scalar tol_achieved      = -1.0;   // sentinel: a norm can never be negative
     bool   solve_success     = false;
     bool   unstable_k0       = false;  // NK: initial gain destabilising
     bool   used_sda_fallback = false;

@@ -22,7 +22,7 @@
 #include "linalg/solvers/solver_types.h"
 #include "linalg/compute_dare_residual.h"
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
 template <typename RW>
 inline MatNX dare_sda(
     const MatNX& A, const MatNXNU& B,
@@ -37,9 +37,11 @@ inline MatNX dare_sda(
     int    max_doublings,
     DARESolverInfo& info)
 {
+    info = DARESolverInfo{};
+
     MatNX Ak = A;
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
     MatNX G = R.B_Rinv_Bt(B);
 #else
     MatNX G = B * R.llt().solve(B.transpose());   // B R^{-1} B'
@@ -47,7 +49,9 @@ inline MatNX dare_sda(
     symmetrise(G);
     MatNX H  = Q;
 
-    int i = 1;
+    Scalar res = 0; // sentinel
+    bool res_valid = false;
+    int i;
     for (i = 1; i <= max_doublings; ++i) {
         
         // Solve for Yk, Zk
@@ -67,13 +71,18 @@ inline MatNX dare_sda(
 
         if (i >= min_doublings) {
             if (Ak.norm() < SCALAR_EPS) break; // catches the case where further doublings cannot progress
-            if (compute_dare_residual(A, B, Q, R, H) < tolerance) break;
+            res = compute_dare_residual(A, B, Q, R, H);
+            if (res < tolerance) {res_valid = true; break;}
         }
     }
 
-    const MatNX P = H;
+    if (!res_valid) {
+        res = compute_dare_residual(A, B, Q, R, H);
+        res_valid = true;
+    }
+
     info.solver_iterations = i;
-    info.tol_achieved      = compute_dare_residual(A, B, Q, R, P);
-    info.solve_success     = (info.tol_achieved < tolerance);
-    return P;
+    info.tol_achieved      = res;
+    info.solve_success     = (res < tolerance);
+    return H; // == P (the cost-to-go matrix, just a different notation)
 }

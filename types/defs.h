@@ -6,26 +6,32 @@
 #include <Eigen/Dense>
 #include <limits>
 
-// ---- Compile-time dimensions --------------------------------
+// All symbols live in namespace sdopt. The using-directive at EOF
+// re-exports them to global scope so internal code is unchanged.
+// Downstream integrators who hit collisions can remove the using.
+namespace sdopt {
+
+// ---- Compile-time definitions ------------------------------
+
 constexpr int NX = 12;   // states
 constexpr int NU = 6;    // inputs  (== n_rotors)
 constexpr int NY = 6;    // outputs (rows of C)
 
-#ifndef USE_TEENSY_KERNELS
-  #define USE_TEENSY_KERNELS 0
+#ifndef SDOPT_TEENSY_BUILD
+  #define SDOPT_TEENSY_BUILD 0
 #endif
 
-#ifndef USE_FLOAT
-  #define USE_FLOAT 1
+#ifndef SDOPT_USE_FLOAT
+  #define SDOPT_USE_FLOAT 1
 #endif
 
-#ifndef USE_INCREMENT_PROXY
-  #define USE_INCREMENT_PROXY 0
+#ifndef NK_USE_INCREMENT_PROXY
+  #define NK_USE_INCREMENT_PROXY 0
 #endif
 
 // ---- Scalar type --------------------------------------------
 
-#if USE_FLOAT
+#if SDOPT_USE_FLOAT
   using Scalar = float;
 #else
   using Scalar = double;
@@ -97,3 +103,6 @@ inline void symmetrise(MatT& X) {
             X(j, i) = v;
         }
 }
+
+}  // namespace sdopt
+using namespace sdopt;

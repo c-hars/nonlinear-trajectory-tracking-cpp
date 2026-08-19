@@ -5,9 +5,17 @@
 //  Clean Eigen-centric version, faithful to the MATLAB reference
 //  (compute_u_SDDRE_v3.m). Readable, auditable, generic.
 //
-//  Step indices remain 1-based to keep the two implementations
-//  diffable against MATLAB.
+//  Mutually exclusive with sdopt_controller_teensy.h — both
+//  define SDOPTController.
+// 
+//  Ported from compute_u_SDDRE_v3.m. Step indices remain 1-based
+//  to keep the implementation diffable against MATLAB.
 // ============================================================
+
+#ifdef SDOPT_CONTROLLER_TEENSY_H_
+  #error "sdopt_controller_generic.h and sdopt_controller_teensy.h cannot both be included in the same translation unit"
+#endif
+#define SDOPT_CONTROLLER_GENERIC_H_
 
 #include "types/defs.h"
 #include "linalg/solvers/solver_types.h"
@@ -26,19 +34,7 @@
 //  Controller-level option / info structs
 // ============================================================
 
-struct SDOPTOpts {
-    Scalar preview_horizon             = 2.0;   // [s]
-    bool   use_full_fh_mpc_at_terminal = false;
-    bool   always_use_full_fh_mpc      = false;
-    DARESolverOpts dare;
-};
-
-struct SDOPTSolveInfo {
-    Scalar         time_sdc_discretize_us = 0;
-    Scalar         time_dare_us           = 0;
-    Scalar         time_feedforward_us    = 0;
-    DARESolverInfo dare_info;
-};
+#include "controllers/sdopt_opts.h"
 
 // ============================================================
 //  SDOPTController
@@ -46,10 +42,11 @@ struct SDOPTSolveInfo {
 class SDOPTController {
 public:
     // ---- Weight matrices (set once before first call) -------
-    MatNYNX C   = MatNYNX::Zero();   // 6x12 output selection
+    MatNYNX C   = MatNYNX::Zero();
     MatNY   Qy  = MatNY::Identity();
     MatNU   R   = MatNU::Identity();
     MatNY   Qyf = MatNY::Identity();
+    MatNX   Q   = MatNX::Identity();
 
     // ---- Reference trajectory --------------------------------
     //  Column-major: r_data[col * NY + row], col in [0, r_len).
@@ -60,10 +57,19 @@ public:
     SDOPTOpts  opts;
     QuadParams qp;
 
+    // Setter only added here for cross-compatability (the Teensy
+    // build uses set_R(), so the generic build also needs this
+    // if we're to avoid duplicating code/messy branching)
+    void set_R(Scalar r) {
+        R.setZero();
+        R.diagonal().setConstant(r);
+    }
+
     void reset() {
         P_ss_.setZero();
         K_ss_.setZero();
         wex_valid_ = false;
+        rebuild_weight_cache();
     }
 
     // =========================================================
@@ -76,7 +82,7 @@ public:
         // ------------------------------------------------
         //  1. SDC matrices + ZOH discretisation
         // ------------------------------------------------
-        sddre_tick_t t0 = sddre_ticks();
+        sdopt_tick_t t0 = sdopt_ticks();
 
         const MatNX Ac = get_A_sdc_quaternion(xk, qp);
 
@@ -89,15 +95,12 @@ public:
         MatNXNU B;
         c2d_zoh_expm(Ac, Bc, qp.Ts, A, B);
 
-        info.time_sdc_discretize_us = _sddre_elapsed_us(t0);
+        info.time_sdc_discretize_us = sdopt_elapsed_us(t0);
 
         // ------------------------------------------------
         //  2. Solve DARE
         // ------------------------------------------------
-        t0 = sddre_ticks();
-
-        MatNX Q = C.transpose() * Qy * C;   // 12x12
-        symmetrise(Q);
+        t0 = sdopt_ticks();
 
         DARESolverOpts dare_opts = opts.dare;
         if (k == 1) dare_opts.method = DARESolverMethod::SDA;  // cold init
@@ -105,13 +108,13 @@ public:
         DARESolverInfo dare_info;
 
         if (dare_opts.method == DARESolverMethod::SDA) {
-            P_ss_ = dare_sda(A, B, Q, R, dare_opts.tolerance,
+            P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                              dare_opts.dare_sda_min_doublings,
                              dare_opts.dare_sda_max_doublings, dare_info);
             K_ss_ = (R + B.transpose() * P_ss_ * B).llt().solve(B.transpose() * P_ss_ * A);
 
         } else {
-            P_ss_ = dare_nk(A, B, Q, R, P_ss_, dare_opts, dare_info);
+            P_ss_ = dare_nk(A, B, Q_, R, P_ss_, dare_opts, dare_info);
             K_ss_ = (R + B.transpose() * P_ss_ * B).llt().solve(B.transpose() * P_ss_ * A);
 
             // NK fallback: cold SDA when the warm start K0 is destabilising
@@ -119,7 +122,7 @@ public:
                 !dare_info.solve_success && dare_info.unstable_k0)
             {
                 DARESolverInfo sda_info;
-                P_ss_ = dare_sda(A, B, Q, R, dare_opts.tolerance,
+                P_ss_ = dare_sda(A, B, Q_, R, dare_opts.tolerance,
                                  dare_opts.dare_sda_min_doublings,
                                  dare_opts.dare_sda_max_doublings, sda_info);
                 K_ss_ = (R + B.transpose() * P_ss_ * B).llt().solve(B.transpose() * P_ss_ * A);
@@ -132,12 +135,12 @@ public:
         }
 
         info.dare_info    = dare_info;
-        info.time_dare_us = _sddre_elapsed_us(t0);
+        info.time_dare_us = sdopt_elapsed_us(t0);
 
         // ------------------------------------------------
         //  3. Feedforward
         // ------------------------------------------------
-        t0 = sddre_ticks();
+        t0 = sdopt_ticks();
 
         const MatNX   A_cl = A - B * K_ss_;
         const MatNXNY CtQy = C.transpose() * Qy;              // 12x6
@@ -188,7 +191,7 @@ public:
                     const MatNUNX K_j    = (R + B.transpose() * P_term * B).llt().solve(B.transpose() * P_term * A);
                     const MatNX   A_cl_j = A - B * K_j;
 
-                    P_term = (Q + K_j.transpose() * R * K_j
+                    P_term = (Q_ + K_j.transpose() * R * K_j
                             + A_cl_j.transpose() * P_term * A_cl_j).eval();
                     symmetrise(P_term);
 
@@ -203,7 +206,7 @@ public:
             }
         }
 
-        info.time_feedforward_us = _sddre_elapsed_us(t0);
+        info.time_feedforward_us = sdopt_elapsed_us(t0);
         return u;
     }
 
@@ -212,9 +215,19 @@ private:
     MatNX   P_ss_ = MatNX::Zero();
     MatNUNX K_ss_ = MatNUNX::Zero();
 
+    // ---- Cached constant weight products --------------------
+    //  Depend only on C, Qy. Rebuilt by reset().
+    MatNX   Q_     = MatNX::Zero();  // C' * Qy * C
+
+    void rebuild_weight_cache() {
+        Q_ = C.transpose() * Qy * C;
+        symmetrise(Q_);
+    }
+
     // ---- Wex cache ------------------------------------------
     //  Wex = C'*Qy * rpad,  rpad = [r_, repmat(r_(:,end), 1, M+1)]
     //  Column-major, MATLAB 1-based columns 1 .. N+M+1.
+    //  NB: duplicated in sdopt_controller_teensy.h — keep in sync.
     bool                wex_valid_ = false;
     int                 wex_N_     = 0;
     int                 wex_M_     = 0;

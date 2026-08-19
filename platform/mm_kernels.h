@@ -20,6 +20,7 @@
 // ============================================================
 
 // C = A * B. All 12x12, column-major, C must not alias A or B.
+// static inline (over inline) has no effect here, just defensive
 static inline void mm12(double* __restrict C,
                         const double* __restrict A,
                         const double* __restrict B)

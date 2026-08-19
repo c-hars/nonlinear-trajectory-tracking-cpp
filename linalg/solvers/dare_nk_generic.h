@@ -31,7 +31,7 @@ inline MatNX dare_nk(
     info = DARESolverInfo{};
 
     // --- max_iters == 0: pass-through -----------------------
-    if (opts.max_iters == 0) {
+    if (opts.max_iters_nk == 0) {
         info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();
         return P0;
     }
@@ -50,8 +50,8 @@ inline MatNX dare_nk(
     //    P_{k+1} = A'P_k A - A'P_k B K_k + Q
     // ========================================================
     case DARESolverMethod::Riccati: {
-        const int min_it = opts.min_iters * 25;
-        const int max_it = opts.max_iters * 25;
+        const int min_it = opts.min_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
+        const int max_it = opts.max_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
 
         for (int i = 1; i <= max_it; ++i) {
             const MatNUNX K = compute_K(P);
@@ -86,7 +86,7 @@ inline MatNX dare_nk(
     //  call passes M = A_K'
     // ========================================================
     case DARESolverMethod::NK: {
-        for (int i = 1; i <= opts.max_iters; ++i) {
+        for (int i = 1; i <= opts.max_iters_nk; ++i) {
             const MatNUNX K  = compute_K(P);
             const MatNX   AK = A - B * K;
             MatNX         Qk = Q + K.transpose() * R * K;
@@ -106,7 +106,7 @@ inline MatNX dare_nk(
                 return P;
             }
 
-            if (opts.early_break && (i >= opts.min_iters)) {
+            if (opts.early_break && (i >= opts.min_iters_nk)) {
                 const Scalar res = compute_dare_residual(A, B, Q, R, P);
                 if (res < opts.tolerance) {
                     info.solver_iterations = i;

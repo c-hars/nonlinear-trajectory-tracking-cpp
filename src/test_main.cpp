@@ -12,7 +12,7 @@
 
 #include "types/defs.h"
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
   #include "controllers/sdopt_controller_teensy.h"
 #else
   #include "controllers/sdopt_controller_generic.h"
@@ -24,7 +24,6 @@
 
 #ifndef ARDUINO
   #include <cstdio>
-  #include <cstring>
   #include <algorithm>
   #include <vector>
 #endif
@@ -109,43 +108,6 @@ static void setup_params(QuadParams& qp) {
     qp.quat_blend_alpha = 1.0;
 }
 
-// ============================================================
-//  Dummy trajectory – timing is valid, correctness is not.
-//  Retained as fallback if actual trajectory data is unavailable.
-// ============================================================
-[[maybe_unused]] static void generate_dummy_data(const QuadParams& qp) {
-    std::memset(x_traj, 0, sizeof(x_traj));
-    std::memset(u_traj, 0, sizeof(u_traj));
-    std::memset(r_traj, 0, sizeof(r_traj));
-
-    for (int k = 0; k < N_STEPS; ++k) {
-        const Scalar t = k * qp.Ts;
-        Scalar* xk = x_traj + k * NX;
-
-        xk[0]  =  1.0  * std::sin(0.6 * t);  // pos
-        xk[1]  =  1.0  * std::sin(1.2 * t);
-        xk[2]  =  0.5  * std::sin(0.4 * t);
-        xk[3]  =  0.6  * std::cos(0.6 * t);  // vel
-        xk[4]  =  1.2  * std::cos(1.2 * t);
-        xk[5]  =  0.2  * std::cos(0.4 * t);
-        xk[6]  =  0.12 * std::sin(1.0 * t);  // q1,q2,q3 (~14 deg tilt)
-        xk[7]  =  0.12 * std::cos(1.0 * t);
-        xk[8]  =  0.05 * std::sin(0.5 * t);
-        xk[9]  =  0.3  * std::cos(1.0 * t);  // body rates
-        xk[10] = -0.3  * std::sin(1.0 * t);
-        xk[11] =  0.1  * std::cos(0.5 * t);
-
-        Scalar* uk = u_traj + k * NU;
-        for (int j = 0; j < NU; ++j)
-            uk[j] = 5.0 * std::sin(0.8 * t + j);
-
-        Scalar* rk = r_traj + k * NY;
-        rk[0] = std::sin(0.6 * t);
-        rk[1] = std::sin(1.2 * t);
-        rk[2] = 0.5 * std::sin(0.4 * t);
-    }
-}
-
 #ifdef ARDUINO
   #define PRINT(...) Serial.printf(__VA_ARGS__)
 #else
@@ -168,86 +130,13 @@ struct RunResult {
 };
 
 // ============================================================
-//  One full pass over the trajectory.
+//  Shared pass body — warmup, timing loop, stats collection.
+//  Templated on the controller type so both variants use
+//  the same code without a preprocessor split.
 // ============================================================
-
-#if USE_TEENSY_KERNELS
-
-// ---- Teensy path: templated on RMode ----
-template <RMode RM>
-static void setup_controller(SDOPTControllerT<RM>& ctrl) {
-    // sel = [1,2,3,9,10,11] (MATLAB) -> 0-based state cols 0,1,2,8,9,10
-    ctrl.C.setZero();
-    const int sel[NY] = {0, 1, 2, 8, 9, 10};
-    for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
-
-    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 9.999999999999999e-01, 9.999999999999999e-01, 9.999999999999999e-01, 5.252490160018791e+00, 1.313122540004698e-02, 1.313122540004698e-02;
-    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.702908333643190e+01, 4.692857975464757e+01, 4.393927906676037e+01, 1.193914043063267e+02, 2.174931323522640e-02, 2.338098610641778e-02;
-
-    ctrl.R.set(Scalar(1.047624419664024e-06)); // R = r*I, r ~= 1e-6
-
-    ctrl.r_data = r_traj;
-    ctrl.r_len  = N_STEPS;
-
-    ctrl.opts.preview_horizon             = 2.0;
-    ctrl.opts.use_full_fh_mpc_at_terminal = false;
-    ctrl.opts.always_use_full_fh_mpc      = false;
-    ctrl.opts.post_residual_check         = false;
-
-    ctrl.opts.dare.method    = DARESolverMethod::NK;
-    ctrl.opts.dare.min_iters = 1;
-    ctrl.opts.dare.max_iters = 10;
-    ctrl.opts.dare.tolerance = 1e-4;
-
-    setup_params(ctrl.qp);
-    ctrl.reset();
-}
-
-template <RMode RM>
-static RunResult run_pass(bool verbose)
+template <typename Ctrl>
+static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
 {
-    // Static to avoid the stack (the controller + cache is ~70 kB, well beyond Teensy's default stack size)
-    static SDOPTControllerT<RM> ctrl;
-    setup_controller(ctrl);
-
-#else
-
-// ---- Generic path: non-templated ----
-static void setup_controller(SDOPTController& ctrl) {
-    ctrl.C.setZero();
-    const int sel[NY] = {0, 1, 2, 8, 9, 10};
-    for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
-
-    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 9.999999999999999e-01, 9.999999999999999e-01, 9.999999999999999e-01, 5.252490160018791e+00, 1.313122540004698e-02, 1.313122540004698e-02;
-    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.702908333643190e+01, 4.692857975464757e+01, 4.393927906676037e+01, 1.193914043063267e+02, 2.174931323522640e-02, 2.338098610641778e-02;
-
-    const Scalar r = Scalar(1.047624419664024e-06);
-    ctrl.R.setZero();
-    ctrl.R.diagonal().setConstant(r);
-
-    ctrl.r_data = r_traj;
-    ctrl.r_len  = N_STEPS;
-
-    ctrl.opts.preview_horizon             = 2.0;
-    ctrl.opts.use_full_fh_mpc_at_terminal = false;
-    ctrl.opts.always_use_full_fh_mpc      = false;
-
-    ctrl.opts.dare.method    = DARESolverMethod::NK;
-    ctrl.opts.dare.min_iters = 1;
-    ctrl.opts.dare.max_iters = 10;
-    ctrl.opts.dare.tolerance = 1e-4;
-
-    setup_params(ctrl.qp);
-    ctrl.reset();
-}
-
-static RunResult run_pass(bool verbose)
-{
-    static SDOPTController ctrl;
-    setup_controller(ctrl);
-
-#endif
-
     // ---- Warm-up: discarded ----------------------------------
     for (int k = 1; k <= N_WARMUP; ++k) {
         const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX);
@@ -272,10 +161,10 @@ static RunResult run_pass(bool verbose)
         const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX); // x_k
         const Eigen::Map<const VecNU> uk(u_traj + u_idx * NU); // u_{k-1} ~= u_k
 
-        const sddre_tick_t t0 = sddre_ticks();
+        const sdopt_tick_t t0 = sdopt_ticks();
         SDOPTSolveInfo info;
         const VecNU u = ctrl.compute_u(k * ctrl.qp.Ts, xk, k, uk, info);
-        const Scalar total = _sddre_elapsed_us(t0);
+        const Scalar total = sdopt_elapsed_us(t0);
 
         t_sdc.push_back(info.time_sdc_discretize_us);
         t_dare.push_back(info.time_dare_us);
@@ -285,8 +174,9 @@ static RunResult run_pass(bool verbose)
         res.total_iters += info.dare_info.solver_iterations;
         if (info.dare_info.used_sda_fallback) ++res.n_fallback;
         if (!info.dare_info.solve_success)    ++res.n_fail;
-        if (info.dare_info.tol_achieved > res.worst_res)
+        if (info.dare_info.tol_achieved > res.worst_res) {
             res.worst_res = info.dare_info.tol_achieved;
+        }
 
         // Print every step for the first 10, then every 20th
         if (verbose && (k <= 10 || k % 20 == 0)) {
@@ -333,13 +223,60 @@ static RunResult run_pass(bool verbose)
     return res;
 }
 
+// ============================================================
+//  One full pass over the trajectory.
+// ============================================================
+
+template <typename Ctrl>
+static void setup_controller(Ctrl& ctrl) {
+    ctrl.C.setZero();
+    const int sel[NY] = {0, 1, 2, 8, 9, 10};
+    for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
+
+    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 9.999999999999999e-01, 9.999999999999999e-01, 9.999999999999999e-01, 5.252490160018791e+00, 1.313122540004698e-02, 1.313122540004698e-02;
+    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.702908333643190e+01, 4.692857975464757e+01, 4.393927906676037e+01, 1.193914043063267e+02, 2.174931323522640e-02, 2.338098610641778e-02;
+
+    ctrl.set_R(Scalar(1.047624419664024e-06));
+
+    ctrl.r_data = r_traj;
+    ctrl.r_len  = N_STEPS;
+
+    ctrl.opts.preview_horizon             = 2.0;
+    ctrl.opts.use_full_fh_mpc_at_terminal = false;
+    ctrl.opts.always_use_full_fh_mpc      = false;
+    ctrl.opts.post_residual_check         = false;
+
+    ctrl.opts.dare.method       = DARESolverMethod::NK;
+    ctrl.opts.dare.min_iters_nk = 1;
+    ctrl.opts.dare.max_iters_nk = 10;
+    ctrl.opts.dare.tolerance    = 1e-4;
+
+    setup_params(ctrl.qp);
+    ctrl.reset();
+}
+
+#if SDOPT_TEENSY_BUILD
+template <RMode RM>
+static RunResult run_pass(bool verbose) {
+    static SDOPTControllerT<RM> ctrl;
+    setup_controller(ctrl);
+    return run_pass_body(ctrl, verbose);
+}
+#else
+static RunResult run_pass(bool verbose) {
+    static SDOPTController ctrl;
+    setup_controller(ctrl);
+    return run_pass_body(ctrl, verbose);
+}
+#endif
+
 static void run_timing_test() {
     if (!load_trajectory_data()) {
         PRINT("Trajectory load failed — aborting.\n");
         return;
     }
 
-    PRINT("clock resolution : %.5f us/tick\n", (double)sddre_tick_us());
+    PRINT("clock resolution : %.5f us/tick\n", (double)sdopt_tick_us());
     PRINT("x[0] = [%.4f %.4f %.4f ... %.4f %.4f %.4f]\n",
         x_traj[0], x_traj[1], x_traj[2],
         x_traj[NX-3], x_traj[NX-2], x_traj[NX-1]);
@@ -347,7 +284,7 @@ static void run_timing_test() {
         u_traj[0], u_traj[1], u_traj[2],
         u_traj[3], u_traj[4], u_traj[5]);
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
     PRINT("=== R mode: dense ===\n");
     const RunResult dense = run_pass<RMode::Dense>(true);
 
@@ -400,7 +337,7 @@ void setup() {
     Serial.begin(115200);
     while (!Serial) {}
     delay(500);
-    sddre_timing_init();
+    sdopt_timing_init();
     PRINT("\n=== SDOPT Timing Test (Teensy 4.1) ===\n");
     PRINT("NX=%d NU=%d NY=%d  N=%d\n\n", NX, NU, NY, N_STEPS);
     run_timing_test();
@@ -412,7 +349,7 @@ void loop() {}
 #else
 
 int main() {
-    sddre_timing_init();
+    sdopt_timing_init();
     std::printf("\n=== SDOPT Timing Test (desktop) ===\n");
     std::printf("NX=%d NU=%d NY=%d  N=%d\n\n", NX, NU, NY, N_STEPS);
     run_timing_test();

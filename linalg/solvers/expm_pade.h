@@ -23,7 +23,7 @@
 #include <cmath>
 #include <type_traits>
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
   #include "platform/mm_kernels.h"
 #endif
 
@@ -146,6 +146,11 @@ inline void pade13(const MatT& A, MatT& U, MatT& V) {
 }  // namespace expm_detail
 
 // ------------------------------------------------------------
+//  Generic (unstructured) expm_pade
+//  Not called by any code — only expm_pade_vanloan is used.
+//  Retained as a cross-check reference.
+// ------------------------------------------------------------
+#if 0
 template <typename MatT>
 MatT expm_pade(const MatT& Ain)
 {
@@ -193,6 +198,7 @@ MatT expm_pade(const MatT& Ain)
     for (int i = 0; i < s; ++i) X = (X * X).eval();
     return X;
 }
+#endif
 
 #include <algorithm>   // std::max
 
@@ -239,7 +245,7 @@ inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
     return { a.P * b.P, a.P * b.Q + b.c * a.Q, a.c * b.c };
 }
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
 // Kernel-backed product for the concrete Teensy case.
 template <typename S>
 inline BlockUT<S,12,6> operator*(const BlockUT<S,12,6>& a,
@@ -276,7 +282,7 @@ inline void diag_add(BlockUT<S,N,M>& X, S s) {
     X.c += s;
 }
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
 // ============================================================
 //  No-pivot LU factorisation and solve for small dense matrices.
 //
@@ -327,7 +333,7 @@ inline void lu_nopivot_solve(const S* __restrict LU, S* __restrict B) {
     for (int c = 0; c < NCOLS; ++c)
         lu_nopivot_solve_col<S, N>(LU, B + c * N);
 }
-#endif  // USE_TEENSY_KERNELS
+#endif  // SDOPT_TEENSY_BUILD
 
 }  // namespace expm_detail
 
@@ -402,10 +408,10 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
     //   One N x N factorisation, N + M right-hand sides, instead of
     //   an (N+M) x (N+M) one.
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
     // No-pivot LU: safe here because W.P = V.P - U.P has diagonal
     // dominance factor >= 8 at all reachable norms.
-    auto WP = (V.P - U.P).eval();
+    Eigen::Matrix<S,N,N> WP = (V.P - U.P).eval();
     expm_detail::lu_nopivot_factor<S, N>(WP.data());
 
     Ad = V.P + U.P;

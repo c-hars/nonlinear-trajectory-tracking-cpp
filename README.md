@@ -27,7 +27,14 @@ SD-OPT (state-dependent optimal preview tracking) solves a state-dependent Ricca
 
 ## Build
 
-PlatformIO, Teensy 4.1. Header-only Eigen for linear algebra. Compile-time `Scalar` switch between `float` and `double` in `sddre_types.h`.
+PlatformIO, Teensy 4.1. Header-only Eigen for linear algebra.
+
+Three compile-time switches live in `types/defs.h` (toggled there directly, or via `-D` flags):
+- `SDOPT_USE_FLOAT` — `1` for single precision, `0` for double (default: `1`)
+- `SDOPT_TEENSY_BUILD` — `1` enables the Teensy-optimised controller, hand-tiled kernels, and `RWeight` templating (default: `0`)
+- `NK_USE_INCREMENT_PROXY` — `1` uses the Newton-increment stopping test instead of the full DARE residual (default: `0`)
+
+The Makefile uses `-MMD -MP` for automatic header dependency tracking. Set `EIGEN_DIR` to your Eigen install path (defaults to `$(HOME)/eigen`). PlatformIO reads `EIGEN_DIR` from the environment via `${sysenv.EIGEN_DIR}`.
 
 ---
 

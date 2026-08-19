@@ -36,7 +36,7 @@ inline MatNX dare_nk(
     info = DARESolverInfo{};
 
     // --- max_iters == 0: pass-through -----------------------
-    if (opts.max_iters == 0) {
+    if (opts.max_iters_nk == 0) {
         K_out = compute_dare_gain(B, R, P0, A, S_llt);
         info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();
         return P0;
@@ -55,8 +55,8 @@ inline MatNX dare_nk(
     //    P_{k+1} = A'P_k A - A'P_k B K_k + Q
     // ========================================================
     case DARESolverMethod::Riccati: {
-        const int min_it = opts.min_iters * 25;
-        const int max_it = opts.max_iters * 25;
+        const int min_it = opts.min_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
+        const int max_it = opts.max_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
 
         for (int i = 1; i <= max_it; ++i) {
             const MatNUNX K = compute_dare_gain(B, R, P, A);
@@ -98,12 +98,14 @@ inline MatNX dare_nk(
         MatNU   S;                                       // R + B'PB, explicit
         MatNUNX K = compute_dare_gain(B, R, P, A, S_llt, S); // gain of incoming P0
 
-        for (int i = 1; i <= opts.max_iters; ++i) {
+        for (int i = 1; i <= opts.max_iters_nk; ++i) {
             const MatNX AK = A - B * K;
 
             // Qk = Q + K'RK
+            // Note: unlike the generic version, the Teensy version operates on a triangular view of the symmetric matrix (mm12_abt_sym), not the whole matrix -> any asymmetry due to numerical roundoff is best dealt with explicitly
             MatNX Qk = Q;
             R.add_KtRK(Qk, K);
+            symmetrise(Qk);
             
             DlyapInfo dinfo;
             P = dlyap_sda(AK.transpose(), Qk, dinfo, opts.dlyap_sda_tolerance, opts.dlyap_sda_max_doublings);
@@ -120,8 +122,8 @@ inline MatNX dare_nk(
             }
 
             const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_llt, S);
-            if (opts.early_break && (i >= opts.min_iters)) {
-                #if USE_INCREMENT_PROXY
+            if (opts.early_break && (i >= opts.min_iters_nk)) {
+                #if NK_USE_INCREMENT_PROXY
                     // Newton-increment identity
                     const MatNUNX dK  = K_new - K;
                     const Scalar  res = (dK.transpose() * (S * dK)).norm();

@@ -21,7 +21,7 @@
 #include "types/defs.h"
 #include "linalg/solvers/solver_types.h"
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
   #include "platform/mm_kernels.h"
   static_assert(NX == 12, "mm12 kernels are hard-coded for 12x12");
   static_assert(std::is_same<Scalar, float>::value ||
@@ -47,17 +47,17 @@ inline MatNX dlyap_sda(
     Scalar ninc      = 0;
     Scalar ninc_prev = 0;
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
     MatNX T, inc, Psq;                        // hoisted scratch for kernels
 #endif
 
-    int j = 1;
-    for (j = 1; j <= max_doublings; ++j) {
+    int j;
+    for (j = 0; j < max_doublings; ++j) {
         // X is symmetric, so inc = P X P' is too. Form T = P X in
         // full, then only the lower triangle of T P', and mirror —
         // saves roughly half of the second product per doubling.
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
         mm12(T.data(), P.data(), X.data());            // T   = P X
         mm12_abt_sym(inc.data(), T.data(), P.data());  // inc = T P', symmetric
 #else
@@ -70,7 +70,7 @@ inline MatNX dlyap_sda(
         ninc            = inc.norm();
         const Scalar nX = X.norm();
 
-        if (j > 1 && ninc_prev > Scalar(0)) {
+        if (j > 0 && ninc_prev > Scalar(0)) {
             const Scalar r = ninc / ninc_prev;
             if (r < Scalar(1) && ninc * r / (Scalar(1) - r) <= tol * nX) {
                 info.converged = true;
@@ -81,7 +81,7 @@ inline MatNX dlyap_sda(
 
         ninc_prev = ninc;
 
-#if USE_TEENSY_KERNELS
+#if SDOPT_TEENSY_BUILD
         mm12(Psq.data(), P.data(), P.data());      // no-alias temp
         P = Psq;
 #else
@@ -92,7 +92,7 @@ inline MatNX dlyap_sda(
     // The loop's behaviour: didn't converge within max_doublings -> declared unstable. If the loop hits max_doublings, then info.converged == false and info.is_stable == false (defaults, declared in solver_types.h)
     // Covers both genuine divergence and rho too close to 1 to resolve a solution (non-uniqueness condition not satisfied - the same failure mode as MATLAB's dlyap()).
 
-    info.doublings     = j;
+    info.doublings     = info.doublings = (j+1 > max_doublings) ? max_doublings : j+1;
     info.rel_increment = ninc / std::max(X.norm(), SCALAR_EPS);
     return X;
 }
