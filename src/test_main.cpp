@@ -27,6 +27,10 @@
   #include <vector>
 #endif
 
+// ============================================================
+//  Test configuration & data buffers
+// ============================================================
+
 constexpr int N_STEPS = 501;
 static Scalar x_traj[N_STEPS * NX];
 static Scalar u_traj[N_STEPS * NU];
@@ -35,8 +39,11 @@ static Scalar qy_diag[NY];
 static Scalar qyf_diag[NY];
 static Scalar r_weight;
 
-// Warmup steps before timing starts (discards cache construction time etc. – not part of the algorithm)
-constexpr int N_WARMUP = 20;
+constexpr int N_WARMUP = 20; // Warmup steps before timing starts (discards cache construction time etc. – not part of the algorithm)
+
+// ============================================================
+//  Data loading (MATLAB float64 export -> Scalar buffers).
+// ============================================================
 
 #ifdef ARDUINO
   #include "data/test_data.h"   // x_traj_data[] etc. stay const double
@@ -89,7 +96,6 @@ constexpr int N_WARMUP = 20;
 
 // ============================================================
 //  Hexacopter parameters
-//   6 arms at 60 deg spacing, alternating spin directions.
 // ============================================================
 static void setup_params(QuadParams& qp) {
     qp.Ts    = 0.01;
@@ -120,6 +126,10 @@ static void setup_params(QuadParams& qp) {
     qp.quat_blend_alpha = 1.0;
 }
 
+// ============================================================
+//  Reporting & timing helpers
+// ============================================================
+
 #ifdef ARDUINO
   #define PRINT(...) Serial.printf(__VA_ARGS__)
 #else
@@ -143,8 +153,6 @@ struct RunResult {
 
 // ============================================================
 //  Shared pass body — warmup, timing loop, stats collection.
-//  Templated on the controller type so both variants use
-//  the same code without a preprocessor split.
 // ============================================================
 template <typename Ctrl>
 static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
@@ -236,7 +244,7 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
 }
 
 // ============================================================
-//  One full pass over the trajectory.
+//  Controller setup + per-build run_pass.
 // ============================================================
 
 template <typename Ctrl>
@@ -284,6 +292,10 @@ static RunResult run_pass(bool verbose) {
 }
 #endif
 
+// ============================================================
+//  Run the passes, print the summary.
+// ============================================================
+
 static void run_timing_test() {
     if (!load_test_data()) {
         PRINT("Data loading failed — aborting.\n");
@@ -298,14 +310,16 @@ static void run_timing_test() {
         u_traj[0], u_traj[1], u_traj[2],
         u_traj[3], u_traj[4], u_traj[5]);
 
-#if SDOPT_TEENSY_BUILD
+#ifdef ARDUINO
+    // Full hardware benchmark: dense vs scalar, with drift check to gauge timing reliability
+    PRINT("=== HIL: full benchmark suite ===\n\n");
+
     PRINT("=== R mode: dense ===\n");
     const RunResult dense = run_pass<RMode::Dense>(true);
 
     PRINT("\n\n=== R mode: scalar ===\n");
     const RunResult scal = run_pass<RMode::Scalar>(true);
 
-    // Second dense pass: session drift within one process.
     PRINT("\n\n=== R mode: dense (repeat, drift check) ===\n");
     const RunResult dense2 = run_pass<RMode::Dense>(false);
 
@@ -338,12 +352,24 @@ static void run_timing_test() {
     PRINT("\nInterpretation: the scalar-vs-dense gap is only meaningful if\n"
           "it exceeds the drift figure above.\n");
 
+#elif SDOPT_TEENSY_BUILD
+    // Teensy-optimised controller, compiled on desktop.
+    // run_pass is templated on RMode, so needs an explicit specialisation.
+    PRINT("=== SIL: Teensy-optimised controller ===\n\n");
+    const RunResult r = run_pass<RMode::Scalar>(true);
+    (void)r;
+
 #else
-    PRINT("=== Generic (Eigen) path ===\n");
+    PRINT("=== SIL: Generic controller ===\n\n");
     const RunResult gen = run_pass(true);
     (void)gen;
+
 #endif
 }
+
+// ============================================================
+//  Entry point
+// ============================================================
 
 #ifdef ARDUINO
 
