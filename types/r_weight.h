@@ -20,7 +20,6 @@
 
 #include <cmath>
 #include <type_traits>
-#include <cassert>
 
 enum class RMode { Scalar, Dense };
 

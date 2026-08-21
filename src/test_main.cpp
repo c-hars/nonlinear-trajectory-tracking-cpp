@@ -6,7 +6,6 @@
 //  Dual-target (Desktop or Teensy 4.1).
 //  - Desktop: see Makefile
 //  - Teensy / PlatformIO: see build_flags in platformio.ini
-//  NB: EIGEN_NO_DEBUG / NDEBUG matter a lot (assertions in the fixed-size paths are otherwise a large fraction of runtime).
 //
 // ============================================================
 
@@ -32,22 +31,28 @@ constexpr int N_STEPS = 501;
 static Scalar x_traj[N_STEPS * NX];
 static Scalar u_traj[N_STEPS * NU];
 static Scalar r_traj[N_STEPS * NY];
+static Scalar qy_diag[NY];
+static Scalar qyf_diag[NY];
+static Scalar r_weight;
 
 // Warmup steps before timing starts (discards cache construction time etc. – not part of the algorithm)
 constexpr int N_WARMUP = 20;
 
 #ifdef ARDUINO
-  #include "data/trajectory_data.h"   // x_traj_data[] etc. stay const double
+  #include "data/test_data.h"   // x_traj_data[] etc. stay const double
 
   template <typename Src, typename Dst>
   static void copy_narrow(const Src* src, Dst* dst, size_t n) {
       for (size_t i = 0; i < n; ++i) dst[i] = static_cast<Dst>(src[i]);
   }
 
-  static bool load_trajectory_data() {
+  static bool load_test_data() {
       copy_narrow(x_traj_data, x_traj, size_t(N_STEPS) * NX);
       copy_narrow(u_traj_data, u_traj, size_t(N_STEPS) * NU);
       copy_narrow(r_traj_data, r_traj, size_t(N_STEPS) * NY);
+      for (int i = 0; i < NY; ++i) qy_diag[i]  = static_cast<Scalar>(qy_diag_data[i]);
+      for (int i = 0; i < NY; ++i) qyf_diag[i] = static_cast<Scalar>(qyf_diag_data[i]);
+      r_weight = static_cast<Scalar>(r_scalar_data[0]);
       return true;
   }
 #endif
@@ -68,10 +73,17 @@ constexpr int N_WARMUP = 20;
       return true;
   }
 
-  static bool load_trajectory_data() {
+  static bool load_weights() {
+      return load_bin("data/qy_diag.bin",  qy_diag,  NY)
+          && load_bin("data/qyf_diag.bin", qyf_diag, NY)
+          && load_bin("data/r_scalar.bin", &r_weight,  1);
+  }
+
+  static bool load_test_data() {
       return load_bin("data/x_traj.bin", x_traj, N_STEPS * NX)
           && load_bin("data/u_traj.bin", u_traj, N_STEPS * NU)
-          && load_bin("data/r_traj.bin", r_traj, N_STEPS * NY);
+          && load_bin("data/r_traj.bin", r_traj, N_STEPS * NY)
+          && load_weights();
   }
 #endif
 
@@ -117,7 +129,7 @@ static void setup_params(QuadParams& qp) {
 static Scalar pct(std::vector<Scalar> v, double p) {
     if (v.empty()) return 0;
     size_t idx = static_cast<size_t>(p / 100.0 * (v.size() - 1));
-    std::nth_element(v.begin(), v.begin() + idx, v.end());
+    std::nth_element(v.begin(), v.begin() + idx, v.end());  // nth_element is destructive -> v is passed in by value
     return v[idx];
 }
 
@@ -157,9 +169,9 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
         PRINT("   k,     sdc,    dare,      ff,   total, it,      res, ok, fb\n");
 
     for (int k = 1; k <= N_STEPS; ++k) {
-        const int u_idx = (k > 1) ? (k - 2) : 0;
+        const int u_idx = (k > 1) ? (k - 2) : 0; // no previous input at k=1, so u_1 is used (same as MATLAB)
         const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX); // x_k
-        const Eigen::Map<const VecNU> uk(u_traj + u_idx * NU); // u_{k-1} ~= u_k
+        const Eigen::Map<const VecNU> uk(u_traj + u_idx * NU);   // u_{k-1} ~= u_k
 
         const sdopt_tick_t t0 = sdopt_ticks();
         SDOPTSolveInfo info;
@@ -233,10 +245,13 @@ static void setup_controller(Ctrl& ctrl) {
     const int sel[NY] = {0, 1, 2, 8, 9, 10};
     for (int i = 0; i < NY; ++i) ctrl.C(i, sel[i]) = 1.0;
 
-    ctrl.Qy.setZero();  ctrl.Qy.diagonal() << 9.999999999999999e-01, 9.999999999999999e-01, 9.999999999999999e-01, 5.252490160018791e+00, 1.313122540004698e-02, 1.313122540004698e-02;
-    ctrl.Qyf.setZero(); ctrl.Qyf.diagonal() << 4.702908333643190e+01, 4.692857975464757e+01, 4.393927906676037e+01, 1.193914043063267e+02, 2.174931323522640e-02, 2.338098610641778e-02;
+    ctrl.Qy.setZero();
+    for (int i = 0; i < NY; ++i) ctrl.Qy(i, i) = qy_diag[i];
 
-    ctrl.set_R(Scalar(1.047624419664024e-06));
+    ctrl.Qyf.setZero();
+    for (int i = 0; i < NY; ++i) ctrl.Qyf(i, i) = qyf_diag[i];
+
+    ctrl.set_R(r_weight);
 
     ctrl.r_data = r_traj;
     ctrl.r_len  = N_STEPS;
@@ -244,7 +259,6 @@ static void setup_controller(Ctrl& ctrl) {
     ctrl.opts.preview_horizon             = 2.0;
     ctrl.opts.use_full_fh_mpc_at_terminal = false;
     ctrl.opts.always_use_full_fh_mpc      = false;
-    ctrl.opts.post_residual_check         = false;
 
     ctrl.opts.dare.method       = DARESolverMethod::NK;
     ctrl.opts.dare.min_iters_nk = 1;
@@ -271,8 +285,8 @@ static RunResult run_pass(bool verbose) {
 #endif
 
 static void run_timing_test() {
-    if (!load_trajectory_data()) {
-        PRINT("Trajectory load failed — aborting.\n");
+    if (!load_test_data()) {
+        PRINT("Data loading failed — aborting.\n");
         return;
     }
 
