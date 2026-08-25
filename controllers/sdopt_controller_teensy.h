@@ -248,7 +248,7 @@ private:
 
     // ---- Wex cache ------------------------------------------
     //  Wex = C'* Qy * r
-    //  NB: duplicated in sdopt_controller_teensy.h — keep in sync.
+    //  NB: duplicated in sdopt_controller_generic.h — keep in sync.
     bool                wex_valid_ = false;
     int                 wex_N_     = 0;
     int                 wex_M_     = 0;
