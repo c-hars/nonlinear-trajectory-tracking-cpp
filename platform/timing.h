@@ -2,30 +2,28 @@
 // ============================================================
 //  platform/timing.h — platform timing
 //
-//    Teensy 4.1 — DWT cycle counter, 1 tick = 1 CPU cycle
-//                 (1.67 ns at 600 MHz). Wraps every ~7.2 s;
+//    Teensy 4.1 — DWT cycle counter, 1 tick = 1 CPU cycle,
+//                 ~1.67 ns at 600 MHz. Wraps every ~7.2 s;
 //                 unsigned subtraction handles that correctly
 //                 for any interval shorter than the period.
 //    Desktop    — steady_clock in nanoseconds. Actual
 //                 granularity is platform-dependent (~100 ns
-//                 via QueryPerformanceCounter on Windows),
-//                 still ~10x better than micros().
+//                 via QueryPerformanceCounter on Windows).
 //
-//  Reported times stay in microseconds, now fractional.
+//  Reported times are in (fractional) microseconds.
 // ============================================================
 
 #include "types/defs.h"
 #include <stdint.h>
 
 #ifdef ARDUINO
-  // Cortex-M7 DWT cycle counter
-  // - Registers addressed directly to avoid pulling Arduino.h into Eigen's include path
-  //   - All four live in the ARMv7-M private peripheral bus at 0xE0000000
-  // - DWT block base is 0xE0001000, the System Control Space (SCS) is 0xE000E000.
-  #define SDOPT_DWT_CYCCNT (*(volatile uint32_t*)0xE0001004) // +0x004 cycle count, free-running, wraps at 2^32 (~7.16 s at 600 MHz)
-  #define SDOPT_DWT_CTRL   (*(volatile uint32_t*)0xE0001000) // +0x000 DWT control; bit 0 = CYCCNTENA (Cycle Counter Enable)
-  #define SDOPT_DWT_LAR    (*(volatile uint32_t*)0xE0001FB0) // +0xFB0 CoreSight Lock Access Register
-  #define SDOPT_DEMCR      (*(volatile uint32_t*)0xE000EDFC) // SCS +0xDFC Debug Exception and Monitor Control
+  // Cortex-M7 DWT cycle counter.
+  // Registers are addressed directly to avoid pulling Arduino.h into Eigen's include path.
+  // DWT block base is 0xE0001000, the System Control Space (SCS) is 0xE000E000.
+  #define SDOPT_DWT_CYCCNT (*(volatile uint32_t*)0xE0001004) // DWT +0x004 | Cycle Count
+  #define SDOPT_DWT_CTRL   (*(volatile uint32_t*)0xE0001000) // DWT +0x000 | DWT Control
+  #define SDOPT_DWT_LAR    (*(volatile uint32_t*)0xE0001FB0) // DWT +0xFB0 | CoreSight Lock Access Register
+  #define SDOPT_DEMCR      (*(volatile uint32_t*)0xE000EDFC) // SCS +0xDFC | Debug Exception and Monitor Control Register
 
   // Default core clock - overridden by F_CPU if defined (so an overclocked build scales correctly)
   #ifndef SDOPT_CPU_HZ
@@ -36,13 +34,13 @@
     #endif
   #endif
 
-  using sdopt_tick_t = uint32_t;   // one tick = one CPU cycle
+  using sdopt_tick_t = uint32_t;
 
   inline void sdopt_timing_init() {
-      SDOPT_DEMCR    |= (1u << 24);        // TRCENA, Trace Enable (gates power and clock; without it the DWT registers read back as zero)
-      SDOPT_DWT_LAR   = 0xC5ACCE55u;       // CoreSight unlock key (Cortex-M7)
-      SDOPT_DWT_CYCCNT = 0;                // start from a known point
-      SDOPT_DWT_CTRL |= 1u;                // cycle counter enable (CYCCNT advances one per CPU cycle while set, frozen while clear)
+      SDOPT_DEMCR    |= (1u << 24);   // TRCENA – enables DWT hardware
+      SDOPT_DWT_LAR   = 0xC5ACCE55u;  // CoreSight unlock key – permits writes to DWT registers
+      SDOPT_DWT_CYCCNT = 0;           // zero the cycle counter
+      SDOPT_DWT_CTRL |= 1u;           // CYCCNTENA – start the cycle counter
   }
 
   inline sdopt_tick_t sdopt_ticks() { return SDOPT_DWT_CYCCNT; }
@@ -73,8 +71,6 @@
   }
 
   inline Scalar sdopt_tick_us() {
-      // Nominal period of steady_clock, in microseconds. The real
-      // granularity is usually coarser than this.
       using P = std::chrono::steady_clock::period;
       return Scalar(1e6) * Scalar(P::num) / Scalar(P::den);
   }

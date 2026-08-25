@@ -1,23 +1,30 @@
 # nonlinear-trajectory-tracking-cpp
 
-C++ implementation of the **SD-OPT** nonlinear trajectory-tracking controller, optimised for real-time execution on embedded hardware (a Teensy 4.1 in this case). The algorithm itself is developed and documented in the companion MATLAB repository [`nonlinear-trajectory-tracking`](https://github.com/c-hars/nonlinear-trajectory-tracking).
+C++ implementation of the **SD-OPT**  controller, optimised for execution on embedded hardware (a Teensy 4.1). The algorithm itself is developed and documented in the companion repository [`nonlinear-trajectory-tracking`](https://github.com/c-hars/nonlinear-trajectory-tracking).
 
-SD-OPT (state-dependent optimal preview tracking) solves a state-dependent Riccati equation at each timestep via warm-started Newton-Kleinman iterations, with a cold solve for the first iteration. In place of MATLAB's `dlyap` and `idare`, the C++ port uses Smith-doubling based algorithms to solve Lyapunov and Riccati equations – minimal, dependency-free and better suited for embedded.
+SD-OPT (state-dependent optimal preview tracking) solves a warm-started state-dependent Riccati equation at each timestep, with a cold solve for the first iteration. For the associated Stein and Riccati equations, doubling algorithms are used as the embedded-friendly dedicated solvers — fast, lightweight, and numerically robust.
 
+## Build
 
-## Key results so far
-- SIL testing: accuracy verified against MATLAB reference implementation
-    - tested across benign and challenging (maneuver time, ~3.8-4.5 seconds) regimes
-    - actuator commands match, including at the extreme (point-of-failure) trajectories
+Eigen (5.0.0) for linear algebra. PlatformIO for Teensy deployment.
+
+The Makefile uses `-MMD -MP` for automatic header dependency tracking. Set `EIGEN_DIR` to your Eigen install path (defaults to `$(HOME)/eigen`). PlatformIO reads `EIGEN_DIR` from the environment via `${sysenv.EIGEN_DIR}`.
+
+Three important compile-time switches live in `types/defs.h` (toggled there directly, or via `-D` flags):
+- `SDOPT_USE_FLOAT` — `1` for single precision, `0` for double (default: `1`)
+- `SDOPT_TEENSY_BUILD` — `1` enables the Teensy-optimised controller (hand-tiled kernels, `RWeight` templating, ...)  (default: `0`)
+- `NK_USE_INCREMENT_PROXY` — `1` uses a cheaper Newton-increment stopping test instead of the full DARE residual test (default: `0`)
+
+## Key results
+- Control outputs: accuracy diffchecked and validated against MATLAB reference — under both single/double precision, and generic/Teensy-optimised builds
+- Verified across regimes: actuator commands match the MATLAB reference code, including at the extreme (point-of-failure) trajectories
     - Riccati residuals are within the specified 1e-4 threshold; convergence sequence matches the `dlyap`/`idare`-based reference
     - NK iteration stats and other diagnostics also cross-verified.
-- For the C++, both single and double-precision variants are implemented (and toggleable between)
-    - Single-precision yields sub-millisecond compute on the Teensy, with no significant error in the control inputs: (206 / 210 samples match when printed to 1 decimal place; the remaining 4 differ by 0.1, i.e. discrepancy under rounding in the 3rd-4th significant figure)
-    - No numerical conditioning has been applied to the system yet: states and cost matrices span roughly 1e5 orders of magnitude.
+- Consistent sub-millisecond compute profile established, on (Teensy) hardware.
     
 
 
-*Hexacopter trajectory tracking – 12 states, 6 inputs, 501 timesteps at 100 Hz. Prediction horizon of 2.0s or 200 samples.*
+*Hexacopter trajectory tracking: 12 state system with 6 control inputs, tracking 6 output references. Loop rate 100Hz, preview horizon 2.0s (200 samples).*
 
 | Platform | Precision | Median (µs) | p95 (µs) | Budget util. |
 |---|---|---:|---:|---:|
@@ -25,16 +32,7 @@ SD-OPT (state-dependent optimal preview tracking) solves a state-dependent Ricca
 | Teensy 4.1 (600 MHz Cortex-M7) | double | 2 369 | 2 535 | 23.7 % |
 | Desktop | double | 19 | 23 | 0.2 % |
 
-## Build
 
-PlatformIO, Teensy 4.1. Header-only Eigen for linear algebra.
-
-Three compile-time switches live in `types/defs.h` (toggled there directly, or via `-D` flags):
-- `SDOPT_USE_FLOAT` — `1` for single precision, `0` for double (default: `1`)
-- `SDOPT_TEENSY_BUILD` — `1` enables the Teensy-optimised controller, hand-tiled kernels, and `RWeight` templating (default: `0`)
-- `NK_USE_INCREMENT_PROXY` — `1` uses the Newton-increment stopping test instead of the full DARE residual (default: `0`)
-
-The Makefile uses `-MMD -MP` for automatic header dependency tracking. Set `EIGEN_DIR` to your Eigen install path (defaults to `$(HOME)/eigen`). PlatformIO reads `EIGEN_DIR` from the environment via `${sysenv.EIGEN_DIR}`.
 
 ---
 

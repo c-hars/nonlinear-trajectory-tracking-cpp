@@ -1,17 +1,14 @@
 #pragma once
 // ============================================================
-//  expm_pade.h — Matrix exponential, scaling-and-squaring Padé
+//  expm_pade.h — matrix exponential (scaling-and-squaring Padé)
 //
-//  Higham (2005), "The scaling and squaring method for the
-//  matrix exponential revisited", SIAM J. Matrix Anal. Appl.
-//  26(4):1179-1193.  Same algorithm family as MATLAB's expm.
-//
+//  Same algorithm family as MATLAB's expm (Higham).
 //  The code walks a ladder of Padé degrees, picking the cheapest
 //  that covers ||A||_1. If none does, A is scaled down to the
 //  top threshold and squared back up after.
 // 
 //  Hand-rolled rather than <unsupported/Eigen/MatrixFunctions>
-//  for predictable compile/cost/auditability, and tunable exactness
+//  for predictable compile, auditability, and tunable exactness
 //  (machine precision by default; a dial for later if needed).
 //
 //  doi:10.1137/1.9780898717778.ch10
@@ -61,7 +58,8 @@ struct expm_pade_traits<float> {
 // ------------------------------------------------------------
 namespace expm_detail {
 
-// N diagonal adds instead of N² fill + N² scaled add.
+// Cheaper version of X += s*I
+// N diagonal adds (versus X += s*I, which fills an NxN identity then does NxN adds)
 template <typename MatT>
 inline void diag_add(MatT& X, typename MatT::Scalar s) {
     X.diagonal().array() += s;
@@ -212,12 +210,9 @@ MatT expm_pade(const MatT& Ain)
 //
 //  because F^k = [A^k  A^(k-1) B; 0  0] for k >= 1.  That set is
 //  closed under +, -, scalar*, and *, so the Pade builders run
-//  on a compact (P,Q,c) triple and never touch a zero block.
-//  The final solve is NX x NX (12x12) rather than the full
-//  augmented (NX+NU) x (NX+NU) (18x18).
+//  on a compact (P,Q,c) triple. The final solve is NX x NX (12x12)
+//  rather than the full augmented (NX+NU) x (NX+NU) (18x18).
 //
-//  Per matrix product:  n^2(n+m) instead of (n+m)^3.
-//  NX=12, NU=6 -> 2592 vs 5832 multiply-adds.
 // ============================================================
 
 namespace expm_detail {
@@ -246,7 +241,7 @@ inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
 }
 
 #if SDOPT_TEENSY_BUILD
-// Kernel-backed product for the concrete Teensy case.
+// Specialisation for N=12, M=6 (uses mm12/mm12x6 kernels)
 template <typename S>
 inline BlockUT<S,12,6> operator*(const BlockUT<S,12,6>& a,
                                  const BlockUT<S,12,6>& b) {
@@ -288,7 +283,8 @@ inline void diag_add(BlockUT<S,N,M>& X, S s) {
 //
 //  Safe when the matrix is diagonally dominant.
 //  For the Van Loan solve, W.P = V.P - U.P has diagonal dominance
-//  factor >= 8 at every Pade degree this code reaches.
+//  because V carries the large even-term constants on the diagonal
+//  and U.P's diagonal is zero (F.c == 0).
 //
 //  Column-major throughout (matching Eigen's default storage).
 // ============================================================
@@ -417,6 +413,7 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
     Ad = V.P + U.P;
     expm_detail::lu_nopivot_solve<S, N, N>(WP.data(), Ad.data());
 
+    // Y.Q - W.Q = (V+U).Q - (V-U).Q = 2*U.Q
     Bd = S(2) * U.Q;
     expm_detail::lu_nopivot_solve<S, N, M>(WP.data(), Bd.data());
 #else
@@ -425,13 +422,13 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
     const auto lu = W.P.partialPivLu();
 
     Ad = lu.solve(Y.P);
-    Bd = lu.solve(Y.Q - W.Q);
+    Bd = lu.solve(Y.Q - W.Q);   // Y.Q - W.Q = 2*U.Q; solved rather than simplified (partialPivLu is already factored)
 #endif
 
-    // Undo scaling.  s == 0 on the typical trajectory
-    // (||F||_1 ≈ 0.22 < th_top), so this loop is cold.
+    // Undo scaling by repeated squaring
+    // s == 0 on the typical trajectory (||F||_1 below th_top), so this loop is cold
     for (int i = 0; i < s; ++i) {
-        // BlockUT squaring with c = 1:
+        // From the BlockUT algebra:
         //   (P, Q, 1)^2 = (P^2, P*Q + Q, 1)
         // Bd must be computed before Ad is overwritten.
         const Eigen::Matrix<S,N,M> Bd_new = Ad * Bd + Bd;

@@ -4,9 +4,14 @@
 // 
 //    || A_cl' P A_cl - P + Q + K'RK ||_F
 // 
-//  Unnormalised (same as the MATLAB reference).
-//  Lyapunov form (expands to same numerator as Riccati form, has better numerics).
-//  Only valid for K computed from the same P – the 6-arg form trusts the implementer to only use a valid K.
+//  Unnormalised (same as the MATLAB reference), Lyapunov form
+//  (expands to same numerator as Riccati form, has better numerics).
+// 
+//  5-arg form computes K from the supplied P, 6-arg form uses a supplied K.
+//  NOTE: The 6-arg form trusts the implementer to only use a valid K.
+//        The residual is only valid if K is computed from the same P.
+// 
+//  ---
 // 
 //  Future work: consider using the normalised form (†) or (‡) for better generality.
 //    (‡): normalised residual = num/den where
@@ -17,18 +22,19 @@
 //          den = norm(P)
 //        only. Much cheaper – effectively the same compute as unnormalised – and a fair approximation.
 //  See doi:10.1002/nla.251 and doi:10.11650/twjm/1500405875 for more info.
-//  Note: if switching to normalised, the Newton increment test in dare_nk.h also needs normalisation.
+//  NOTE: if switching to normalised, the Newton increment test in dare_nk.h also needs normalisation.
 //
 // ============================================================
 
 #include "types/defs.h"
-
 #if SDOPT_TEENSY_BUILD
   #include "linalg/compute_dare_gain.h"
 #endif
 
-// 6-arg form: uses a supplied K.
+
 #if SDOPT_TEENSY_BUILD
+
+// SDOPT_TEENSY_BUILD, 6-arg
 template <typename RW>
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
@@ -41,7 +47,20 @@ inline Scalar compute_dare_residual(
     P_rhs.noalias() += A_cl.transpose() * P * A_cl;
     return (P_rhs - P).norm();
 }
+
+// SDOPT_TEENSY_BUILD, 5-arg
+template <typename RW>
+inline Scalar compute_dare_residual(
+    const MatNX& A, const MatNXNU& B,
+    const MatNX& Q, const RW& R,
+    const MatNX& P)
+{
+    return compute_dare_residual(A, B, Q, R, P, compute_dare_gain(B, R, P, A));
+}
+
 #else
+
+// Generic build, 6-arg
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
     const MatNX& Q, const MatNU& R,
@@ -53,25 +72,16 @@ inline Scalar compute_dare_residual(
     P_rhs.noalias() += A_cl.transpose() * P * A_cl;
     return (P_rhs - P).norm();
 }
-#endif
 
-// 5-arg overload: recomputes K from the supplied P.
-#if SDOPT_TEENSY_BUILD
-template <typename RW>
-inline Scalar compute_dare_residual(
-    const MatNX& A, const MatNXNU& B,
-    const MatNX& Q, const RW& R,
-    const MatNX& P)
-{
-    return compute_dare_residual(A, B, Q, R, P, compute_dare_gain(B, R, P, A));
-}
-#else
+// Generic build, 5-arg
 inline Scalar compute_dare_residual(
     const MatNX& A, const MatNXNU& B,
     const MatNX& Q, const MatNU& R,
     const MatNX& P)
 {
+    // Note: the gain is inlined here since compute_dare_gain is templated on RType (not MatNU)
     const MatNUNX K = (R + B.transpose() * P * B).llt().solve(B.transpose() * P * A);
     return compute_dare_residual(A, B, Q, R, P, K);
 }
+
 #endif

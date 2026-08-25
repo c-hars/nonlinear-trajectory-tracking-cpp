@@ -162,7 +162,7 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
         const Eigen::Map<const VecNX> xk(x_traj + (k - 1) * NX);
         const Eigen::Map<const VecNU> uk(u_traj + (k - 1) * NU);
         SDOPTSolveInfo winfo;
-        volatile Scalar sink = ctrl.compute_u(k * ctrl.qp.Ts, xk, k, uk, winfo)(0); // volatile to prevent dead code elimination
+        volatile Scalar sink = ctrl.compute_u(xk, k, uk, winfo)(0); // volatile to prevent dead code elimination
         (void)sink;
     }
     ctrl.reset();   // back to the cold P_ss so k == 1 takes the SDA path
@@ -183,17 +183,17 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
 
         const sdopt_tick_t t0 = sdopt_ticks();
         SDOPTSolveInfo info;
-        const VecNU u = ctrl.compute_u(k * ctrl.qp.Ts, xk, k, uk, info);
+        const VecNU u = ctrl.compute_u(xk, k, uk, info);
         const Scalar total = sdopt_elapsed_us(t0);
 
-        t_sdc.push_back(info.time_sdc_discretize_us);
+        t_sdc.push_back(info.time_sdc_discretise_us);
         t_dare.push_back(info.time_dare_us);
         t_ff.push_back(info.time_feedforward_us);
         t_tot.push_back(total);
 
         res.total_iters += info.dare_info.solver_iterations;
         if (info.dare_info.used_sda_fallback) ++res.n_fallback;
-        if (!info.dare_info.solve_success)    ++res.n_fail;
+        if (!info.dare_info.solve_success) ++res.n_fail;
         if (info.dare_info.tol_achieved > res.worst_res) {
             res.worst_res = info.dare_info.tol_achieved;
         }
@@ -201,7 +201,7 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
         // Print every step for the first 10, then every 20th
         if (verbose && (k <= 10 || k % 20 == 0)) {
             PRINT("%4d, %7.2f, %7.2f, %7.2f, %7.2f, %2d, %7.2e, %d, %d, ",
-                k, info.time_sdc_discretize_us, info.time_dare_us, 
+                k, info.time_sdc_discretise_us, info.time_dare_us, 
                 info.time_feedforward_us, total, info.dare_info.solver_iterations, 
                 info.dare_info.tol_achieved, info.dare_info.solve_success ? 1 : 0, 
                 info.dare_info.used_sda_fallback ? 1 : 0);

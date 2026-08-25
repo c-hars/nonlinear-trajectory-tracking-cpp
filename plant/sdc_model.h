@@ -19,15 +19,15 @@
 //  State (0-based here, 1-based in MATLAB):
 //    [0:2]  pos      
 //    [3:5]  vel      
-//    [6:8]  q1,q2,q3    (q0 recovered from norm)
+//    [6:8]  q1,q2,q3
 //    [9:11] wx,wy,wz 
 // ============================================================
 inline MatNX get_A_sdc_quaternion(const VecNX& x, const QuadParams& qp)
 {
     const Scalar q1 = x(6), q2 = x(7), q3 = x(8);
 
-    // q0 from the norm constraint
-    // Clamped at 0 so a slightly over-unity vector part can't produce NaN (MATLAB would go complex here, loud warning below 0.01)
+    // q0 extraction (via the unit norm constraint)
+    // NOTE: clamped at 0 so a slightly over-unity vector part can't produce NaN. No warnings as the singularity is approached however (unlike MATLAB).
     const Scalar q0sq = Scalar(1) - q1 * q1 - q2 * q2 - q3 * q3;
     const Scalar q0   = std::sqrt(std::max(q0sq, Scalar(0)));
 
@@ -98,8 +98,7 @@ inline MatNXNU get_B_sdc(const VecNU& delta_u, const QuadParams& qp)
     MatNXNU Bc = MatNXNU::Zero();
 
     // Effective per-rotor term, gated by the health mask.
-    const VecNU w = (Scalar(2) * qp.nominal_omegas + delta_u)
-                        .cwiseProduct(qp.enabled);
+    const VecNU w = (Scalar(2) * qp.nominal_omegas + delta_u).cwiseProduct(qp.enabled);
 
     for (int j = 0; j < NU; ++j) {
         const Scalar f = qp.kF * w(j);

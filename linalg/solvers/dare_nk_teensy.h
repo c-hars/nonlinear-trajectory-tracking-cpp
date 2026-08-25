@@ -2,9 +2,8 @@
 // ============================================================
 //  dare_nk_teensy.h — Solve the DARE iteratively from P0
 //
-//  Teensy-optimised version: returns K and S_llt via out-params
-//  so the caller can reuse the LLT factorisation in the
-//  feedforward step without refactorising.
+//  Teensy-optimised version.
+//  Returns P, but also provides K and S_llt via out-params.
 //
 //    NK      — Default. Newton-Kleinman via dlyap (quadratic
 //              convergence; P0 must yield a stabilising gain
@@ -12,7 +11,7 @@
 //    Riccati — direct DARE recursion (linear convergence; 
 //              globally stable from any PSD P0).
 //
-//  Port of iterative_dare.m
+//  Based on iterative_dare.m
 // ============================================================
 
 #include "types/defs.h"
@@ -38,13 +37,13 @@ inline MatNX dare_nk(
     // --- max_iters == 0: pass-through -----------------------
     if (opts.max_iters_nk == 0) {
         K_out = compute_dare_gain(B, R, P0, A, S_llt);
-        info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();
+        info.tol_achieved = -1.0; // sentinel
         return P0;
     }
 
     // --- Early exit if P0 already solves the DARE -----------
-    //  NOT SUPPORTED. Only reachable with min_iters == 0,
-    //  which is never recommended.
+    //  NOT SUPPORTED (only reachable with min_iters == 0,
+    //  which is not recommended).
 
     MatNX P = P0;
 
@@ -89,20 +88,16 @@ inline MatNX dare_nk(
     //    K_k = (R + B'P_k B)^{-1} B'P_k A
     //    A_K = A - B K_k
     //    P_{k+1} solves   A_K' P A_K - P + (Q + K'RK) = 0
-    //
-    //  dlyap_sda solves  M X M' - X + N = 0 (observability
-    //  convention, matching the MATLAB-native dlyap), so the
-    //  call passes M = A_K'
     // ========================================================
     case DARESolverMethod::NK: {
-        MatNU   S;                                       // R + B'PB, explicit
+        MatNU   S;  // R + B'PB
         MatNUNX K = compute_dare_gain(B, R, P, A, S_llt, S); // gain of incoming P0
 
         for (int i = 1; i <= opts.max_iters_nk; ++i) {
             const MatNX AK = A - B * K;
 
             // Qk = Q + K'RK
-            // Note: unlike the generic version, the Teensy version operates on a triangular view of the symmetric matrix (mm12_abt_sym), not the whole matrix -> any asymmetry due to numerical roundoff is best dealt with explicitly
+            // Note: symmetrise() is used here, unlike the generic version - this version operates on a triangular view of the symmetric matrix (mm12_abt_sym) where asymmetry is more consequential
             MatNX Qk = Q;
             R.add_KtRK(Qk, K);
             symmetrise(Qk);
@@ -110,7 +105,7 @@ inline MatNX dare_nk(
             DlyapInfo dinfo;
             P = dlyap_sda(AK.transpose(), Qk, dinfo, opts.dlyap_sda_tolerance, opts.dlyap_sda_max_doublings);
             if (i == 1 && !dinfo.is_stable) {
-                // Non-converged initial gain, K0 was not in stability basin: NK will diverge.
+                // K0 was not in stability basin: NK will diverge.
                 // Signal the caller to fall back to a cold SDA solve.
                 // K_out is still made consistent with the returned P (contract), though the SDA fallback discards both.
                 info.unstable_k0       = true;
@@ -160,10 +155,9 @@ inline MatNX dare_nk(
         break;
     }
 
-    // Only reached when the loop's exhausted without early-break return.
-    // K_out matches P here on every path, so the true residual costs no extra gain computation.
+    // Reached when the loop's exhausted without early-break return
     if (opts.early_break) {
-        info.tol_achieved  = compute_dare_residual(A, B, Q, R, P, K_out);
+        info.tol_achieved  = compute_dare_residual(A, B, Q, R, P, K_out); // Valid since K_out matches P on every path here
         info.solve_success = (info.tol_achieved < opts.tolerance);
     } else {
         info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();

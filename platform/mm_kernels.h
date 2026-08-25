@@ -2,17 +2,21 @@
 // ============================================================
 //  mm_kernels.h — hand-tiled small matrix kernels
 //
-//  Column-major throughout. Plain overloading on double*/float*
-//  rather than templated — arm-none-eabi-gcc fails to
-//  scalar-replace a local accumulator array, turning every
-//  update into a stack load/store pair. All accumulators are
-//  named scalar locals instead.
+//  Column-major throughout. Separate double/float overloads rather
+//  than templates; named scalar accumulators (c00, c01, ...) stay in
+//  registers reliably (arm-none-eabi-gcc didn't and every update
+//  became a stack load/store pair).
 //
-//  Tile shapes are set by the Cortex-M7 FPv5-D16 register file
-//  (16 double regs aliasing 32 single regs):
-//    double: 2x4 accumulator block + operands
-//    float:  4x4 accumulator block + operands
-//    mm12x6: double 2x3, float 4x3 (NR = 3 for 6 columns)
+//  Tile shapes are sized to the Cortex-M7 FPv5-D16 register file
+//  (16 double regs, or equivalently 32 single regs):
+//    double 12x12: 2x4 tile + operands
+//    float  12x12: 4x4 tile + operands
+//    double 12x6:  2x3 tile + operands
+//    float  12x6:  4x3 tile + operands
+// 
+//  NOTE: C, A, B here follow BLAS convention (C = result, A/B = operands),
+//  not to be confused with notation for the state-space matrices.
+// 
 // ============================================================
 
 // ============================================================

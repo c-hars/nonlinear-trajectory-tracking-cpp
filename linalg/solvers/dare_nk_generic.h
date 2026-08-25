@@ -2,8 +2,7 @@
 // ============================================================
 //  dare_nk_generic.h — Solve the DARE iteratively from P0
 //
-//  Clean Eigen-centric version: returns P only. The caller
-//  computes the gain from P as needed. No LLT passthrough.
+//  Returns P only: the caller computes the gain from P as needed.
 //
 //    NK      — Default. Newton-Kleinman via dlyap (quadratic
 //              convergence; P0 must yield a stabilising gain
@@ -11,7 +10,7 @@
 //    Riccati — direct DARE recursion (linear convergence; 
 //              globally stable from any PSD P0).
 //
-//  Port of iterative_dare.m
+//  Based on iterative_dare.m
 // ============================================================
 
 #include "types/defs.h"
@@ -32,7 +31,7 @@ inline MatNX dare_nk(
 
     // --- max_iters == 0: pass-through -----------------------
     if (opts.max_iters_nk == 0) {
-        info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();
+        info.tol_achieved = -1.0; // sentinel
         return P0;
     }
 
@@ -93,8 +92,7 @@ inline MatNX dare_nk(
             symmetrise(Qk);
 
             DlyapInfo dinfo;
-            P = dlyap_sda(AK.transpose(), Qk, dinfo,
-                          opts.dlyap_sda_tolerance, opts.dlyap_sda_max_doublings);
+            P = dlyap_sda(AK.transpose(), Qk, dinfo, opts.dlyap_sda_tolerance, opts.dlyap_sda_max_doublings);
 
             if (i == 1 && !dinfo.is_stable) {
                 // Non-converged initial gain, K0 was not in stability basin: NK will diverge.

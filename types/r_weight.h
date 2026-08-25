@@ -5,15 +5,14 @@
 //  R is often r*I; this wrapper is parameterised on how much
 //  structure R may assume:
 //
-//    RMode::Scalar — stores r alone. Eliminates factorisations
-//                    and replaces matrix ops with scaled products.
-//    RMode::Dense  — stores the full 6×6; general-case arithmetic.
+//    RMode::Dense  — stores the full 6×6 and uses standard arithmetic.
+//    RMode::Scalar — stores r alone and uses structure-exploiting
+//                    arithmetic.
 //
 //  Only the two structural extremes (Scalar and Dense) are supported —
-//  these bracket any intermediate structures (e.g. diagonal, block-diagonal).
-//
-//  NB: modes are not necessarily bit-identical (e.g. r*(K'K)
-//  vs K'*(R*K) – these can differ at the last bit).
+//  intermediate structures (e.g. diagonal, block-diagonal) possible, 
+//  but performance differences are all bracketed by the two extremes.
+// 
 // ============================================================
 
 #include "types/defs.h"
@@ -52,6 +51,7 @@ struct RWeight {
     }
 
     void set(const MatNU& Rm) {
+        static_assert(!is_scalar, "set(MatNU) requires RMode::Dense");
         R_ = Rm;
     }
 
@@ -80,16 +80,14 @@ struct RWeight {
     }
 
     //  X <- X + K'RK
-    //  Scalar: one gemm with alpha = r.  Dense: temporary + gemm.
-    //  rankUpdate (lower-tri only) was tried — slower on Cortex-M7; mirror-copy cost dominates.
+    //  Note: symmetric product; rankUpdate (lower-tri only) was tried earlier — slower on Cortex-M7 at the time (mirror-copy cost from the temporary dominated), but worth revisiting now: mm12_abt_sym handles the symmetric product efficiently.
     void add_KtRK(MatNX& X, const MatNUNX& K) const {
         if constexpr (is_scalar) X.noalias() += R_ * (K.transpose() * K);
         else                     X.noalias() += K.transpose() * R_ * K;
     }
 
     //  G = B R^{-1} B'
-    //  Scalar mode replaces the LLT factorisation + solve with one scalar division.
-    //  Cold path only (k == 1 and Newton-Kleinman fallback).
+    //  Cold path only (dare_sda)
     MatNX B_Rinv_Bt(const MatNXNU& B) const {
         MatNX G;
         if constexpr (is_scalar) {

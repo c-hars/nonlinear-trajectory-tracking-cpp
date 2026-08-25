@@ -44,15 +44,15 @@ inline MatNX dare_sda(
 #if SDOPT_TEENSY_BUILD
     MatNX G = R.B_Rinv_Bt(B);
 #else
-    MatNX G = B * R.llt().solve(B.transpose());   // B R^{-1} B'
+    MatNX G = B * R.llt().solve(B.transpose());
 #endif
     symmetrise(G);
     MatNX H  = Q;
 
-    Scalar res = 0; // sentinel
+    Scalar res = 0;
     bool res_valid = false;
     int i;
-    for (i = 1; i <= max_doublings; ++i) {
+    for (i = 0; i < max_doublings; ++i) {
         
         // Solve for Yk, Zk
         const MatNX Wk = MatNX::Identity() + G * H;
@@ -69,8 +69,8 @@ inline MatNX dare_sda(
         symmetrise(G);
         Ak = (Ak * Yk).eval();
 
-        if (i >= min_doublings) {
-            if (Ak.norm() < SCALAR_EPS) break; // catches the case where further doublings cannot progress
+        if (i+1 >= min_doublings) {
+            if (Ak.norm() <= SCALAR_EPS) break; // further doublings cannot progress
             res = compute_dare_residual(A, B, Q, R, H);
             if (res < tolerance) {res_valid = true; break;}
         }
@@ -81,7 +81,7 @@ inline MatNX dare_sda(
         res_valid = true;
     }
 
-    info.solver_iterations = i;
+    info.solver_iterations = i+1;
     info.tol_achieved      = res;
     info.solve_success     = (res < tolerance);
     return H; // == P (the cost-to-go matrix, just a different notation)

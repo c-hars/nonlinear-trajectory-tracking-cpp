@@ -1,21 +1,14 @@
 #pragma once
 // ============================================================
 //  types/defs.h — Dimensions, scalar type, Eigen aliases
+//
+//  All symbols live in namespace sdopt; a using-directive at EOF
+//  exports them so internal code can access everything unqualified.
+//  (Downstream integrators who hit collisions can remove the using).
 // ============================================================
 
 #include <Eigen/Dense>
 #include <limits>
-
-// All symbols live in namespace sdopt. The using-directive at EOF
-// re-exports them to global scope so internal code is unchanged.
-// Downstream integrators who hit collisions can remove the using.
-namespace sdopt {
-
-// ---- Compile-time definitions ------------------------------
-
-constexpr int NX = 12;   // states
-constexpr int NU = 6;    // inputs  (== n_rotors)
-constexpr int NY = 6;    // outputs (rows of C)
 
 #ifndef SDOPT_TEENSY_BUILD
   #define SDOPT_TEENSY_BUILD 0
@@ -28,6 +21,14 @@ constexpr int NY = 6;    // outputs (rows of C)
 #ifndef NK_USE_INCREMENT_PROXY
   #define NK_USE_INCREMENT_PROXY 0
 #endif
+
+namespace sdopt {
+
+// ---- Compile-time definitions ------------------------------
+
+constexpr int NX = 12;   // states
+constexpr int NU = 6;    // inputs  (== n_rotors)
+constexpr int NY = 6;    // outputs (rows of C)
 
 // ---- Scalar type --------------------------------------------
 
@@ -65,16 +66,11 @@ using MatNUNX = Eigen::Matrix<Scalar, NU, NX>;
 using MatNYNX = Eigen::Matrix<Scalar, NY, NX>;
 using MatNXNY = Eigen::Matrix<Scalar, NX, NY>;
 using Mat3    = Eigen::Matrix<Scalar, 3, 3>;
+using MatAug  = Eigen::Matrix<Scalar, NX + NU, NX + NU>;
+using MatNX2  = Eigen::Matrix<Scalar, NX, 2 * NX>;
 using VecNX   = Eigen::Matrix<Scalar, NX, 1>;
 using VecNU   = Eigen::Matrix<Scalar, NU, 1>;
 using VecNY   = Eigen::Matrix<Scalar, NY, 1>;
-
-// Augmented (NX+NU) x (NX+NU) for the Van Loan c2d
-constexpr int NA = NX + NU;
-using MatAug = Eigen::Matrix<Scalar, NA, NA>;
-
-// Wide RHS for the SDA two-right-hand-side solve
-using MatNX2 = Eigen::Matrix<Scalar, NX, 2 * NX>;
 
 // ============================================================
 //  In-place symmetrisation.
