@@ -1,42 +1,28 @@
 #pragma once
 // ============================================================
-//  expm_pade.h — Matrix exponential, scaling-and-squaring Padé
+//  expm_pade.h — matrix exponential (scaling-and-squaring Padé)
 //
-//  Higham (2005), "The scaling and squaring method for the
-//  matrix exponential revisited", SIAM J. Matrix Anal. Appl.
-//  26(4):1179-1193.  Same algorithm family as MATLAB's expm.
-//
+//  Same algorithm family as MATLAB's expm (Higham).
+//  The code walks a ladder of Padé degrees, picking the cheapest
+//  that covers ||A||_1. If none does, A is scaled down to the
+//  top threshold and squared back up after.
+// 
 //  Hand-rolled rather than <unsupported/Eigen/MatrixFunctions>
-//  so the cost is predictable, the code is auditable, and the
-//  exactness can be tuned — machine precision by default, but
-//  this is is likely not needed in practice: a dial for
-//  optimisation later, as required. And for this Teensy timing
-//  benchmark you want to know exactly which branch you're
-//  paying for.
+//  for predictable compile, auditability, and tunable exactness
+//  (machine precision by default; a dial for later if needed).
 //
-//  Precision dispatch
-//  ------------------
-//  The theta_m thresholds are the largest ||A||_1 for which the
-//  [m/m] Pade approximant has backward error at or below the
-//  unit roundoff u of the working precision.  They therefore
-//  depend on u and MUST be swapped when Scalar changes.
-//
-//    double (u = 2^-53):  m in {3,5,7,9,13}, scale to theta_13
-//    float  (u = 2^-24):  m in {3,5,7},      scale to theta_7
-//
-//  Single precision stops at m=7 because there is no accuracy
-//  left to buy above it — theta_9/theta_13 are derived from a
-//  backward-error target ~9 orders tighter than float roundoff.
-//  (Same degree sets as Eigen's MatrixExponential.h.)
-//
+//  doi:10.1137/1.9780898717778.ch10
+//  doi:10.1137/090768539
 // ============================================================
 
-// doi:10.1137/1.9780898717778.ch10
-// https://www.cis.upenn.edu/~cis6100/higham_matrix_exponential_siam_2004.pdf
 
 #include <Eigen/Dense>
 #include <cmath>
 #include <type_traits>
+
+#if SDOPT_TEENSY_BUILD
+  #include "platform/mm_kernels.h"
+#endif
 
 // ------------------------------------------------------------
 //  Degree-selection thresholds, per precision.
@@ -72,7 +58,8 @@ struct expm_pade_traits<float> {
 // ------------------------------------------------------------
 namespace expm_detail {
 
-// Dense Eigen matrix: N diagonal adds instead of N² fill + N² scaled add.
+// Cheaper version of X += s*I
+// N diagonal adds (versus X += s*I, which fills an NxN identity then does NxN adds)
 template <typename MatT>
 inline void diag_add(MatT& X, typename MatT::Scalar s) {
     X.diagonal().array() += s;
@@ -157,6 +144,11 @@ inline void pade13(const MatT& A, MatT& U, MatT& V) {
 }  // namespace expm_detail
 
 // ------------------------------------------------------------
+//  Generic (unstructured) expm_pade
+//  Not called by any code — only expm_pade_vanloan is used.
+//  Retained as a cross-check reference.
+// ------------------------------------------------------------
+#if 0
 template <typename MatT>
 MatT expm_pade(const MatT& Ain)
 {
@@ -204,6 +196,7 @@ MatT expm_pade(const MatT& Ain)
     for (int i = 0; i < s; ++i) X = (X * X).eval();
     return X;
 }
+#endif
 
 #include <algorithm>   // std::max
 
@@ -216,13 +209,10 @@ MatT expm_pade(const MatT& Ain)
 //        [ 0   c*I ]     bottom-right always a multiple of I
 //
 //  because F^k = [A^k  A^(k-1) B; 0  0] for k >= 1.  That set is
-//  closed under +, -, scalar*, and *, so the Pade builders above
-//  run verbatim on the triple (P,Q,c) and never touch a zero
-//  block.  The coefficient tables are shared, not forked — only
-//  the driver differs (norm, solve, squaring).
+//  closed under +, -, scalar*, and *, so the Pade builders run
+//  on a compact (P,Q,c) triple. The final solve is NX x NX (12x12)
+//  rather than the full augmented (NX+NU) x (NX+NU) (18x18).
 //
-//  Per matrix product:  n^2(n+m) instead of (n+m)^3.
-//  NX=12, NU=6 -> 2592 vs 5832 multiply-adds.
 // ============================================================
 
 namespace expm_detail {
@@ -250,6 +240,20 @@ inline BlockUT<S,N,M> operator*(const BlockUT<S,N,M>& a,
     return { a.P * b.P, a.P * b.Q + b.c * a.Q, a.c * b.c };
 }
 
+#if SDOPT_TEENSY_BUILD
+// Specialisation for N=12, M=6 (uses mm12/mm12x6 kernels)
+template <typename S>
+inline BlockUT<S,12,6> operator*(const BlockUT<S,12,6>& a,
+                                 const BlockUT<S,12,6>& b) {
+    BlockUT<S,12,6> r;
+    mm12  (r.P.data(), a.P.data(), b.P.data());
+    mm12x6(r.Q.data(), a.P.data(), b.Q.data());
+    r.Q.noalias() += b.c * a.Q;
+    r.c = a.c * b.c;
+    return r;
+}
+#endif
+
 template <typename S, int N, int M>
 inline BlockUT<S,N,M> operator+(const BlockUT<S,N,M>& a,
                                 const BlockUT<S,N,M>& b) {
@@ -273,16 +277,70 @@ inline void diag_add(BlockUT<S,N,M>& X, S s) {
     X.c += s;
 }
 
+#if SDOPT_TEENSY_BUILD
+// ============================================================
+//  No-pivot LU factorisation and solve for small dense matrices.
+//
+//  Safe when the matrix is diagonally dominant.
+//  For the Van Loan solve, W.P = V.P - U.P has diagonal dominance
+//  because V carries the large even-term constants on the diagonal
+//  and U.P's diagonal is zero (F.c == 0).
+//
+//  Column-major throughout (matching Eigen's default storage).
+// ============================================================
+
+template <typename S, int N>
+inline void lu_nopivot_factor(S* __restrict M) {
+    for (int k = 0; k < N - 1; ++k) {
+        S* col_k = M + k * N;
+        const S inv = S(1) / col_k[k];
+        for (int i = k + 1; i < N; ++i)
+            col_k[i] *= inv;
+        for (int j = k + 1; j < N; ++j) {
+            S* col_j = M + j * N;
+            const S u_kj = col_j[k];
+            for (int i = k + 1; i < N; ++i)
+                col_j[i] -= col_k[i] * u_kj;
+        }
+    }
+}
+
+template <typename S, int N>
+inline void lu_nopivot_solve_col(const S* __restrict LU, S* __restrict b) {
+    // Forward substitution (unit-diagonal L, column-oriented)
+    for (int k = 0; k < N - 1; ++k) {
+        const S bk = b[k];
+        const S* col_k = LU + k * N;
+        for (int i = k + 1; i < N; ++i)
+            b[i] -= col_k[i] * bk;
+    }
+    // Back substitution (column-oriented)
+    for (int j = N - 1; j >= 0; --j) {
+        const S* col_j = LU + j * N;
+        b[j] /= col_j[j];
+        const S bj = b[j];
+        for (int i = 0; i < j; ++i)
+            b[i] -= col_j[i] * bj;
+    }
+}
+
+template <typename S, int N, int NCOLS>
+inline void lu_nopivot_solve(const S* __restrict LU, S* __restrict B) {
+    for (int c = 0; c < NCOLS; ++c)
+        lu_nopivot_solve_col<S, N>(LU, B + c * N);
+}
+#endif  // SDOPT_TEENSY_BUILD
+
 }  // namespace expm_detail
 
 
 // ------------------------------------------------------------
-//  expm([Ac Bc; 0 0] * Ts) -> (Ad, Bd), without ever forming
-//  the (N+M) x (N+M) matrix.
+//  expm([Ac Bc; 0 0] * Ts) → (Ad, Bd), without forming
+//  the (N+M)×(N+M) matrix.
 //
-//  MUST be a template: the degree ladder names th9/th13, which
-//  do not exist in the float traits.  Only a dependent Th lets
-//  if-constexpr discard that branch un-instantiated.
+//  Must be a template (the degree ladder names th9/th13, which
+//  don't exist in the float traits; only a dependent Th lets
+//  if-constexpr discard that branch un-instantiated).
 // ------------------------------------------------------------
 template <typename S, int N, int M>
 void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
@@ -297,8 +355,8 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
 
     Blk       F { Ac * Ts, Bc * Ts, S(0) };
 
-    // ||F||_1 = max column sum.  Bottom block row is zero, so this
-    // is just the larger of the two blocks' max column sums.
+    // ||F||_1 = max column sum
+    // Bottom block row is zero, so this is just the larger of the two blocks' max column sums.
     const S nA = std::max(F.P.cwiseAbs().colwise().sum().maxCoeff(),
                           F.Q.cwiseAbs().colwise().sum().maxCoeff());
 
@@ -337,6 +395,7 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
     }
 
     // r_m(F) = (V - U)^{-1}(V + U).
+    //
     //   U.c == 0 always — every term carries F to an odd power >= 1 —
     //   so W.c == Y.c == the Pade constant term, which is never zero.
     //   Solving W X = Y then forces X.c = 1 and leaves
@@ -344,19 +403,36 @@ void expm_pade_vanloan(const Eigen::Matrix<S,N,N>& Ac,
     //     X.Q = W.P^{-1} (Y.Q - W.Q)
     //   One N x N factorisation, N + M right-hand sides, instead of
     //   an (N+M) x (N+M) one.
+
+#if SDOPT_TEENSY_BUILD
+    // No-pivot LU: safe here because W.P = V.P - U.P has diagonal
+    // dominance factor >= 8 at all reachable norms.
+    Eigen::Matrix<S,N,N> WP = (V.P - U.P).eval();
+    expm_detail::lu_nopivot_factor<S, N>(WP.data());
+
+    Ad = V.P + U.P;
+    expm_detail::lu_nopivot_solve<S, N, N>(WP.data(), Ad.data());
+
+    // Y.Q - W.Q = (V+U).Q - (V-U).Q = 2*U.Q
+    Bd = S(2) * U.Q;
+    expm_detail::lu_nopivot_solve<S, N, M>(WP.data(), Bd.data());
+#else
     const Blk  W  = V - U;
     const Blk  Y  = V + U;
     const auto lu = W.P.partialPivLu();
 
-    Blk X;
-    X.P = lu.solve(Y.P);
-    X.Q = lu.solve(Y.Q - W.Q);
-    X.c = S(1);
+    Ad = lu.solve(Y.P);
+    Bd = lu.solve(Y.Q - W.Q);   // Y.Q - W.Q = 2*U.Q; solved rather than simplified (partialPivLu is already factored)
+#endif
 
-    // Undo the scaling.  X^2 = (X.P^2, X.P X.Q + X.Q, 1).
-    // Safe: operator* builds a full temporary before the assignment.
-    for (int i = 0; i < s; ++i) X = X * X;
-
-    Ad = X.P;
-    Bd = X.Q;
+    // Undo scaling by repeated squaring
+    // s == 0 on the typical trajectory (||F||_1 below th_top), so this loop is cold
+    for (int i = 0; i < s; ++i) {
+        // From the BlockUT algebra:
+        //   (P, Q, 1)^2 = (P^2, P*Q + Q, 1)
+        // Bd must be computed before Ad is overwritten.
+        const Eigen::Matrix<S,N,M> Bd_new = Ad * Bd + Bd;
+        Ad = (Ad * Ad).eval();
+        Bd = Bd_new;
+    }
 }
