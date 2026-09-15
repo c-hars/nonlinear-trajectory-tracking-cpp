@@ -49,6 +49,7 @@ inline MatNX dare_nk(
     //    P_{k+1} = A'P_k A - A'P_k B K_k + Q
     // ========================================================
     case DARESolverMethod::Riccati: {
+        info.method = DARESolverMethod::Riccati;
         const int min_it = opts.min_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
         const int max_it = opts.max_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
 
@@ -85,6 +86,7 @@ inline MatNX dare_nk(
     //  call passes M = A_K'
     // ========================================================
     case DARESolverMethod::NK: {
+        info.method = DARESolverMethod::NK;
         for (int i = 1; i <= opts.max_iters_nk; ++i) {
             const MatNUNX K  = compute_K(P);
             const MatNX   AK = A - B * K;
@@ -124,6 +126,6 @@ inline MatNX dare_nk(
 
     // Only reached when the loop exhausted without early-break return.
     info.tol_achieved  = compute_dare_residual(A, B, Q, R, P);
-    info.solve_success = (info.tol_achieved < opts.tolerance);
+    info.solve_success = false;
     return P;
 }

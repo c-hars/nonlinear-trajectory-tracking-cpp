@@ -146,7 +146,7 @@ static Scalar pct(std::vector<Scalar> v, double p) {
 struct RunResult {
     Scalar med_sdc = 0, med_dare = 0, med_ff = 0, med_tot = 0;
     Scalar p95_tot = 0, max_tot = 0;
-    long   total_iters = 0;
+    long   total_nk_iters = 0;
     int    n_fallback = 0, n_fail = 0;
     Scalar worst_res = 0;
 };
@@ -191,8 +191,11 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
         t_ff.push_back(info.time_feedforward_us);
         t_tot.push_back(total);
 
-        res.total_iters += info.dare_info.solver_iterations;
-        if (info.dare_info.used_sda_fallback) ++res.n_fallback;
+        const bool used_sda = (info.dare_info.method == DARESolverMethod::SDA);
+        const bool used_sda_fallback = used_sda && k != 1;
+
+        if (!used_sda) res.total_nk_iters += info.dare_info.solver_iterations;
+        if (used_sda_fallback) ++res.n_fallback;
         if (!info.dare_info.solve_success) ++res.n_fail;
         if (info.dare_info.tol_achieved > res.worst_res) {
             res.worst_res = info.dare_info.tol_achieved;
@@ -204,7 +207,7 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
                 k, info.time_sdc_discretise_us, info.time_dare_us, 
                 info.time_feedforward_us, total, info.dare_info.solver_iterations, 
                 info.dare_info.tol_achieved, info.dare_info.solve_success ? 1 : 0, 
-                info.dare_info.used_sda_fallback ? 1 : 0);
+                used_sda_fallback ? 1 : 0);
             PRINT("u = [%7.1f %7.1f %7.1f %7.1f %7.1f %7.1f]\n", 
                 u(0), u(1), u(2), u(3), u(4), u(5));
         }
@@ -234,7 +237,7 @@ static RunResult run_pass_body(Ctrl& ctrl, bool verbose)
               100.0 * res.med_tot / (1e6*ctrl.qp.Ts));
         PRINT("  worst-case util : %.2f %%\n",
               100.0 * res.max_tot / (1e6*ctrl.qp.Ts));
-        PRINT("  NK iterations   : %ld total\n", res.total_iters);
+        PRINT("  NK iterations   : %ld total\n", res.total_nk_iters);
         PRINT("  SDA fallbacks   : %d / %d\n", res.n_fallback, N_STEPS);
         PRINT("  DARE failures   : %d / %d\n", res.n_fail, N_STEPS);
         PRINT("  worst residual  : %.2e\n", res.worst_res);
@@ -271,6 +274,7 @@ static void setup_controller(Ctrl& ctrl) {
     ctrl.opts.dare.method       = DARESolverMethod::NK;
     ctrl.opts.dare.min_iters_nk = 1;
     ctrl.opts.dare.max_iters_nk = 10;
+    ctrl.opts.dare.early_break  = true;  // Note: early_break == false <-> Fixed iteration (RTI) scheme.
     ctrl.opts.dare.tolerance    = 1e-4;
 
     setup_params(ctrl.qp);
@@ -345,8 +349,8 @@ static void run_timing_test() {
     PRINT("\ndrift (dense pass 2 vs pass 1, total): %+.2f %%\n",
           rel(dense2.med_tot, dense.med_tot));
     PRINT("NK iterations  dense %ld  scalar %ld  (delta %+ld)\n",
-          dense.total_iters, scal.total_iters,
-          scal.total_iters - dense.total_iters);
+          dense.total_nk_iters, scal.total_nk_iters,
+          scal.total_nk_iters - dense.total_nk_iters);
     PRINT("worst residual dense %.2e  scalar %.2e\n",
           dense.worst_res, scal.worst_res);
     PRINT("\nInterpretation: the scalar-vs-dense gap is only meaningful if\n"

@@ -11,7 +11,7 @@
 #include <limits>
 
 #ifndef SDOPT_TEENSY_BUILD
-  #define SDOPT_TEENSY_BUILD 0
+  #define SDOPT_TEENSY_BUILD 1
 #endif
 
 #ifndef SDOPT_USE_FLOAT
@@ -19,7 +19,7 @@
 #endif
 
 #ifndef NK_USE_INCREMENT_PROXY
-  #define NK_USE_INCREMENT_PROXY 0
+  #define NK_USE_INCREMENT_PROXY 1
 #endif
 
 namespace sdopt {

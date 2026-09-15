@@ -35,17 +35,16 @@ inline MatNX dare_nk(
     info = DARESolverInfo{};
 
     // --- max_iters == 0: pass-through -----------------------
+    // The DARE residual is not computed here – avoids overhead,
+    // which is the intent of using a fixed gain (max_iters == 0).
     if (opts.max_iters_nk == 0) {
         K_out = compute_dare_gain(B, R, P0, A, S_llt);
-        info.tol_achieved = -1.0; // sentinel
+        info.tol_achieved = -1.0; // sentinel – impossible value
         return P0;
     }
 
-    // --- Early exit if P0 already solves the DARE -----------
-    //  NOT SUPPORTED (only reachable with min_iters == 0,
-    //  which is not recommended).
-
     MatNX P = P0;
+    Scalar res = -1.0; // sentinel
 
     switch (opts.method) {
 
@@ -54,6 +53,7 @@ inline MatNX dare_nk(
     //    P_{k+1} = A'P_k A - A'P_k B K_k + Q
     // ========================================================
     case DARESolverMethod::Riccati: {
+        info.method = DARESolverMethod::Riccati;
         const int min_it = opts.min_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
         const int max_it = opts.max_iters_nk * DARESolverOpts::RICCATI_ITERS_PER_NK;
 
@@ -62,13 +62,14 @@ inline MatNX dare_nk(
             P = (A.transpose() * P * A
                - A.transpose() * P * B * K + Q).eval();
             symmetrise(P);
-
-            if (opts.early_break && (i >= min_it) &&
-                ((i - min_it) % opts.riccati_check_every == 0))
-            {
+            
+            bool evaluate_residual = (opts.early_break && (i >= min_it));    // Early break enabled, and it's worth running residual checks.
+            evaluate_residual &= ((i - min_it) % opts.riccati_check_every == 0); // Residual computation is expensive, Riccati iteration is cheap – this compromises the two cases more reasonably.
+            evaluate_residual |= (i == max_it);                                   // Always need `res` computed on the last iter.
+            if (evaluate_residual) {
                 // Gain from the updated P, kept for return.
                 K_out = compute_dare_gain(B, R, P, A, S_llt);
-                const Scalar res = compute_dare_residual(A, B, Q, R, P, K_out);
+                res = compute_dare_residual(A, B, Q, R, P, K_out);
                 if (res < opts.tolerance) {
                     info.solver_iterations = i;
                     info.tol_achieved      = res;
@@ -90,6 +91,7 @@ inline MatNX dare_nk(
     //    P_{k+1} solves   A_K' P A_K - P + (Q + K'RK) = 0
     // ========================================================
     case DARESolverMethod::NK: {
+        info.method = DARESolverMethod::NK;
         MatNU   S;  // R + B'PB
         MatNUNX K = compute_dare_gain(B, R, P, A, S_llt, S); // gain of incoming P0
 
@@ -97,7 +99,9 @@ inline MatNX dare_nk(
             const MatNX AK = A - B * K;
 
             // Qk = Q + K'RK
-            // Note: symmetrise() is used here, unlike the generic version - this version operates on a triangular view of the symmetric matrix (mm12_abt_sym) where asymmetry is more consequential
+            // Note: symmetrise() is used here, unlike the generic version – this
+            // version operates on a triangular view of the symmetric matrix 
+            // (mm12_abt_sym) where asymmetry is more consequential.
             MatNX Qk = Q;
             R.add_KtRK(Qk, K);
             symmetrise(Qk);
@@ -117,11 +121,14 @@ inline MatNX dare_nk(
             }
 
             const MatNUNX K_new = compute_dare_gain(B, R, P, A, S_llt, S);
-            if (opts.early_break && (i >= opts.min_iters_nk)) {
+
+            bool evaluate_residual = (opts.early_break && (i >= opts.min_iters_nk)); // Early break enabled, and it's worth running residual checks.
+            evaluate_residual |= (i == opts.max_iters_nk);                           // Always need `res` computed on the last iter.
+            if (evaluate_residual) {
                 #if NK_USE_INCREMENT_PROXY
                     // Newton-increment identity
                     const MatNUNX dK  = K_new - K;
-                    const Scalar  res = (dK.transpose() * (S * dK)).norm();
+                    res = (dK.transpose() * (S * dK)).norm();
                     if (res < opts.tolerance) {
                         info.solver_iterations = i;
                         info.tol_achieved      = res;
@@ -132,17 +139,17 @@ inline MatNX dare_nk(
                     }
                 #else
                     // Explicit DARE residual
-                    const Scalar res = compute_dare_residual(A, B, Q, R, P, K_new);
+                    res = compute_dare_residual(A, B, Q, R, P, K_new);
                     if (res < opts.tolerance) {
                         info.solver_iterations = i;
                         info.tol_achieved      = res;
-                        info.tol_is_estimate   = false;
                         info.solve_success     = true;
                         K_out                  = K_new;
                         return P;
                     }
                 #endif
             }
+
             K = K_new;
             info.solver_iterations = i;
         }
@@ -150,18 +157,15 @@ inline MatNX dare_nk(
         break;
     }
 
+    // Defensive fallback
     default:
         K_out = compute_dare_gain(B, R, P, A, S_llt);
         break;
     }
 
     // Reached when the loop's exhausted without early-break return
-    if (opts.early_break) {
-        info.tol_achieved  = compute_dare_residual(A, B, Q, R, P, K_out); // Valid since K_out matches P on every path here
-        info.solve_success = (info.tol_achieved < opts.tolerance);
-    } else {
-        info.tol_achieved = std::numeric_limits<Scalar>::quiet_NaN();
-        info.solve_success = false;
-    }
+    info.solve_success = false;
+    info.tol_achieved  = res;  // last computed residual, or -1.0 sentinel
+
     return P;
 }

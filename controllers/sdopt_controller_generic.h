@@ -115,7 +115,7 @@ public:
                 dare_info.tol_achieved      = sda_info.tol_achieved;
                 dare_info.solver_iterations = sda_info.solver_iterations;
                 dare_info.solve_success     = sda_info.solve_success;
-                dare_info.used_sda_fallback = true;
+                dare_info.method = DARESolverMethod::SDA;
             }
         }
 

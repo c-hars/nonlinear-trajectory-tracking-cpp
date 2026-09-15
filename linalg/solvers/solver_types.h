@@ -9,7 +9,7 @@
 
 // ---- Enums / option structs ---------------------------------
 
-enum class DARESolverMethod { NK, Riccati, SDA };
+enum class DARESolverMethod { Unset, NK, Riccati, SDA };
 
 struct DARESolverOpts {
     DARESolverMethod method = DARESolverMethod::NK;
@@ -32,19 +32,20 @@ struct DARESolverOpts {
     int    dare_sda_max_doublings   = 40;
 };
 
+// Do not modify defaults - critical for solver behaviour
 struct DARESolverInfo {
+    DARESolverMethod method  = DARESolverMethod::Unset;  // sentinel (undeclared solve method)
     int    solver_iterations = 0;
     Scalar tol_achieved      = -1.0;   // sentinel (a norm - can never be negative)
     bool   solve_success     = false;  // achieved requested tolerance
     bool   unstable_k0       = false;  // NK: initial gain K0 was destabilising
-    bool   used_sda_fallback = false;  // NK: used the cold solve fallback
     bool   tol_is_estimate   = false;  // NK: true when the value in tol_achieved is from the Newton increment norm (rather than the full DARE residual)
 };
 
-// ---- dlyap info ---------------------------------------------
+// Do not modify defaults - critical for solver behaviour
 struct DlyapInfo {
-    bool   converged     = false; // do not modify - critical for solver behaviour
-    bool   is_stable     = false; // do not modify - critical for solver behaviour
+    bool   converged     = false;
+    bool   is_stable     = false;
     int    doublings     = 0;
     Scalar rel_increment = -1.0; // sentinel (never possible from genuine solver behaviour)
 };

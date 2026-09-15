@@ -38,6 +38,7 @@ inline MatNX dare_sda(
     DARESolverInfo& info)
 {
     info = DARESolverInfo{};
+    info.method = DARESolverMethod::SDA;
 
     MatNX Ak = A;
 
