@@ -2,21 +2,18 @@
   "version": "2.0.0",
   "tasks": [
     {
-        "label": "build and run",
-        "type": "shell",
-        "command": "make run",
-        "group": {
-            "kind": "build",
-            "isDefault": true
-        },
-        "problemMatcher": []
+      "label": "build",
+      "type": "shell",
+      "command": "make",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$gcc"
     },
     {
-        "label": "run",
-        "type": "shell",
-        "command": "./test_sdopt",
-        "group": "test",
-        "problemMatcher": []
+      "label": "run",
+      "type": "shell",
+      "command": "make run",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": "$gcc"
     }
-]
+  ]
 }
